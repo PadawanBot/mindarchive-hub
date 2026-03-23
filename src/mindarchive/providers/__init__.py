@@ -1,4 +1,4 @@
-"""Provider abstractions for swappable AI services."""
+"""Provider abstractions and concrete implementations for AI services."""
 
 from mindarchive.providers.base import (
     ImageProvider,

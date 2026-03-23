@@ -130,6 +130,35 @@ def status(
 
 
 @app.command()
+def thumbnail(
+    project_slug: str = typer.Argument(..., help="Project slug"),
+    text: str = typer.Option("", "--text", help="Thumbnail text overlay"),
+    base_image: Optional[str] = typer.Option(None, "--image", help="Path to base image (or auto-generate)"),
+) -> None:
+    """Generate a thumbnail for a project."""
+    from pathlib import Path as _Path
+
+    from mindarchive.config.settings import get_settings
+    from mindarchive.production.compositor import ThumbnailCompositor
+
+    settings = get_settings()
+    output_path = settings.projects_dir / project_slug / "thumbnails" / "thumbnail.jpg"
+
+    if not base_image:
+        console.print("[yellow]No base image provided. Use --image <path> or generate via DALL-E.[/yellow]")
+        return
+
+    compositor = ThumbnailCompositor()
+    result = compositor.compose(
+        base_image_path=_Path(base_image),
+        text=text or project_slug.replace("-", " ").title(),
+        output_path=output_path,
+        overlay_darken=0.2,
+    )
+    console.print(f"[green]Thumbnail saved: {result}[/green]")
+
+
+@app.command()
 def schedule(
     profile: str = typer.Option("mindarchive", "--profile", "-p", help="Channel profile"),
 ) -> None:

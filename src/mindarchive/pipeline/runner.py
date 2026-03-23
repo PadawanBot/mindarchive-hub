@@ -192,7 +192,65 @@ class PipelineRunner:
         if summary.get("total", 0) > 0:
             console.print(f"\n[dim]Estimated cost: ${summary['total']:.4f}[/dim]")
 
+        # Run production pipeline if pre-production completed fully
+        all_preprod_done = all(
+            r.is_success for r in results.values()
+        ) and not orchestrator.paused_at
+
+        if all_preprod_done and not step_range:
+            console.print("\n[bold cyan]── Production Pipeline ──[/bold cyan]")
+            production_results = await self._run_production(
+                project_slug=project_slug,
+                output_dir=output_dir,
+                artifacts=orchestrator.artifacts,
+                profile_dict=profile_dict,
+                cost_tracker=cost_tracker,
+                rate_limiter=rate_limiter,
+            )
+            prod_ok = sum(1 for r in production_results if r.status == "complete")
+            prod_err = sum(1 for r in production_results if r.status == "error")
+            console.print(f"\n[bold]Production:[/bold] {prod_ok} complete, {prod_err} errors")
+
         return results
+
+    async def _run_production(
+        self,
+        project_slug: str,
+        output_dir: Path,
+        artifacts: dict[int, Any],
+        profile_dict: dict[str, Any],
+        cost_tracker: CostTracker,
+        rate_limiter: RateLimiter,
+    ) -> list:
+        """Run the P1-P7 production pipeline after pre-production."""
+        from mindarchive.production.orchestrator import ProductionOrchestrator
+
+        def on_prod_event(step_id: str, status: str, data: dict[str, Any]) -> None:
+            msg = data.get("message", "")
+            if status == "start":
+                console.print(f"\n[cyan]▶ {step_id}: {msg}[/cyan]")
+            elif status == "complete":
+                console.print(f"[green]  ✓ {msg}[/green]")
+            elif status == "error":
+                console.print(f"[red]  ✗ {step_id} error: {data.get('error', msg)}[/red]")
+            elif status == "skip":
+                console.print(f"[dim]  ⊘ {msg}[/dim]")
+
+        prod_orch = ProductionOrchestrator(
+            settings=self._settings,
+            cost_tracker=cost_tracker,
+            rate_limiter=rate_limiter,
+            event_callback=on_prod_event,
+        )
+
+        ctx = prod_orch.build_context(
+            project_slug=project_slug,
+            output_dir=output_dir,
+            preproduction_artifacts=artifacts,
+            profile_data=profile_dict,
+        )
+
+        return await prod_orch.run(ctx)
 
 
 def _cli_event_handler(event: PipelineEvent, console: Console) -> None:
