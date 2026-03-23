@@ -39,8 +39,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse("dashboard.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "dashboard.html", {
             "version": __version__,
             "active_page": "dashboard",
         })
@@ -50,8 +49,7 @@ def create_app() -> FastAPI:
         request: Request,
         status: str = Query("all", alias="status"),
     ) -> HTMLResponse:
-        return templates.TemplateResponse("projects.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "projects.html", {
             "version": __version__,
             "active_page": "projects",
             "status_filter": status,
@@ -61,13 +59,11 @@ def create_app() -> FastAPI:
     async def project_detail_page(request: Request, slug: str) -> HTMLResponse:
         project = _get_project_summary(slug)
         if not project:
-            return templates.TemplateResponse("dashboard.html", {
-                "request": request,
+            return templates.TemplateResponse(request, "dashboard.html", {
                 "version": __version__,
                 "active_page": "projects",
             })
-        return templates.TemplateResponse("project_detail.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "project_detail.html", {
             "version": __version__,
             "active_page": "projects",
             "project": project,
@@ -82,8 +78,7 @@ def create_app() -> FastAPI:
         manager = ProfileManager(settings.profiles_dir)
         profiles = manager.list_profiles()
 
-        return templates.TemplateResponse("profiles.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "profiles.html", {
             "profiles": profiles,
             "version": __version__,
             "active_page": "profiles",
@@ -97,8 +92,7 @@ def create_app() -> FastAPI:
         settings = get_settings()
         presets = list_presets(settings.formats_dir)
 
-        return templates.TemplateResponse("formats.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "formats.html", {
             "presets": presets,
             "version": __version__,
             "active_page": "formats",
@@ -107,8 +101,7 @@ def create_app() -> FastAPI:
     @app.get("/costs", response_class=HTMLResponse)
     async def costs_page(request: Request) -> HTMLResponse:
         cost_data = _get_cost_dashboard_data()
-        return templates.TemplateResponse("costs.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "costs.html", {
             "version": __version__,
             "active_page": "costs",
             **cost_data,
@@ -121,8 +114,7 @@ def create_app() -> FastAPI:
     @app.get("/partials/stats", response_class=HTMLResponse)
     async def partial_stats(request: Request) -> HTMLResponse:
         stats = _get_dashboard_stats()
-        return templates.TemplateResponse("partials/stats.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/stats.html", {
             **stats,
         })
 
@@ -133,32 +125,28 @@ def create_app() -> FastAPI:
         status: str | None = Query(None),
     ) -> HTMLResponse:
         projects = _list_projects(limit=limit, status=status)
-        return templates.TemplateResponse("partials/recent_projects.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/recent_projects.html", {
             "projects": projects,
         })
 
     @app.get("/partials/live-activity", response_class=HTMLResponse)
     async def partial_live_activity(request: Request) -> HTMLResponse:
         running = _list_projects(status="running", limit=10)
-        return templates.TemplateResponse("partials/live_activity.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/live_activity.html", {
             "running_projects": running,
         })
 
     @app.get("/partials/project-steps/{slug}", response_class=HTMLResponse)
     async def partial_project_steps(request: Request, slug: str) -> HTMLResponse:
         steps = _get_project_steps(slug)
-        return templates.TemplateResponse("partials/project_steps.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/project_steps.html", {
             "steps": steps,
         })
 
     @app.get("/partials/project-artifacts/{slug}", response_class=HTMLResponse)
     async def partial_project_artifacts(request: Request, slug: str) -> HTMLResponse:
         artifacts = _get_project_artifacts(slug)
-        return templates.TemplateResponse("partials/project_artifacts.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/project_artifacts.html", {
             "artifacts": artifacts,
         })
 
@@ -167,8 +155,7 @@ def create_app() -> FastAPI:
         costs = _get_project_costs(slug)
         total_estimated = sum(c.get("estimated_cost_usd", 0) or 0 for c in costs)
         total_actual = sum(c.get("actual_cost_usd", 0) or 0 for c in costs)
-        return templates.TemplateResponse("partials/project_costs.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/project_costs.html", {
             "costs": costs,
             "total_estimated": total_estimated,
             "total_actual": total_actual,
@@ -177,8 +164,7 @@ def create_app() -> FastAPI:
     @app.get("/partials/project-distribution/{slug}", response_class=HTMLResponse)
     async def partial_project_distribution(request: Request, slug: str) -> HTMLResponse:
         dist = _get_distribution_summary(slug)
-        return templates.TemplateResponse("partials/project_distribution.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/project_distribution.html", {
             "distribution": dist,
             "project_slug": slug,
         })
@@ -195,16 +181,14 @@ def create_app() -> FastAPI:
         except FileNotFoundError:
             return HTMLResponse("<p class='text-muted'>Profile not found.</p>")
 
-        return templates.TemplateResponse("partials/profile_detail.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/profile_detail.html", {
             "profile": profile,
         })
 
     @app.get("/partials/cost-ledger", response_class=HTMLResponse)
     async def partial_cost_ledger(request: Request) -> HTMLResponse:
         entries = _get_recent_cost_entries(limit=50)
-        return templates.TemplateResponse("partials/cost_ledger.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "partials/cost_ledger.html", {
             "entries": entries,
         })
 
