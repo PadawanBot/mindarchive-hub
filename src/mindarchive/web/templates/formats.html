@@ -10,7 +10,7 @@
 
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     {% for p in presets %}
-    <div class="panel rounded-lg p-6">
+    <div class="panel panel-hover rounded-lg p-6 transition-all">
         <div class="flex items-center justify-between mb-2">
             <h3 class="text-lg font-semibold">{{ p.name }}</h3>
             {% if p.builtin %}
@@ -19,25 +19,35 @@
             <span class="text-xs accent-gold panel-mid px-2 py-1 rounded">custom</span>
             {% endif %}
         </div>
-        <p class="text-muted text-sm mb-3">{{ p.description }}</p>
-        <div class="grid grid-cols-2 gap-2 text-sm">
-            <div>
-                <span class="text-muted">Duration:</span>
+        <p class="text-muted text-sm mb-4">{{ p.description }}</p>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="panel-mid rounded px-3 py-2">
+                <span class="text-muted text-xs block">Duration</span>
                 <span>{{ p.duration_range_min }}-{{ p.duration_range_max }} min</span>
             </div>
-            <div>
-                <span class="text-muted">Words:</span>
+            <div class="panel-mid rounded px-3 py-2">
+                <span class="text-muted text-xs block">Words</span>
                 <span>{{ p.target_words }}</span>
             </div>
-            <div>
-                <span class="text-muted">WPM:</span>
+            <div class="panel-mid rounded px-3 py-2">
+                <span class="text-muted text-xs block">WPM</span>
                 <span>{{ p.base_wpm }}</span>
             </div>
-            <div>
-                <span class="text-muted">Runway:</span>
+            <div class="panel-mid rounded px-3 py-2">
+                <span class="text-muted text-xs block">Runway</span>
                 <span>max {{ p.runway_max_scenes }}</span>
             </div>
         </div>
+        {% if p.tone_instruction %}
+        <div class="mt-3 text-xs text-muted">
+            <span class="font-medium">Tone:</span> {{ p.tone_instruction }}
+        </div>
+        {% endif %}
+        {% if p.visual_style %}
+        <div class="mt-1 text-xs text-muted">
+            <span class="font-medium">Visual:</span> {{ p.visual_style }}
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
 </div>

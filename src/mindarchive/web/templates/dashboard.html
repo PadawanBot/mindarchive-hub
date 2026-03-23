@@ -3,26 +3,71 @@
 {% block content %}
 <h1 class="text-3xl font-bold mb-8">Production Dashboard</h1>
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-    <div class="panel rounded-lg p-6">
-        <p class="text-muted text-sm mb-1">Active Projects</p>
-        <p class="text-4xl font-bold accent-teal">0</p>
-    </div>
-    <div class="panel rounded-lg p-6">
-        <p class="text-muted text-sm mb-1">Profiles</p>
-        <p class="text-4xl font-bold accent-gold">0</p>
-    </div>
-    <div class="panel rounded-lg p-6">
-        <p class="text-muted text-sm mb-1">Format Presets</p>
-        <p class="text-4xl font-bold accent-purple">5</p>
+<!-- Stats row (auto-refreshes via HTMX) -->
+<div id="stats-panel"
+     hx-get="/partials/stats"
+     hx-trigger="load, refresh, every 30s"
+     hx-swap="innerHTML">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="panel rounded-lg p-6">
+            <p class="text-muted text-sm mb-1">Active Projects</p>
+            <p class="text-4xl font-bold accent-teal">-</p>
+        </div>
+        <div class="panel rounded-lg p-6">
+            <p class="text-muted text-sm mb-1">Completed</p>
+            <p class="text-4xl font-bold text-green-400">-</p>
+        </div>
+        <div class="panel rounded-lg p-6">
+            <p class="text-muted text-sm mb-1">Profiles</p>
+            <p class="text-4xl font-bold accent-gold">-</p>
+        </div>
+        <div class="panel rounded-lg p-6">
+            <p class="text-muted text-sm mb-1">Est. Cost Today</p>
+            <p class="text-4xl font-bold accent-purple">-</p>
+        </div>
     </div>
 </div>
 
+<!-- Live pipeline activity -->
+<div class="panel rounded-lg p-6 mb-8">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold">Live Pipeline Activity</h2>
+        <span class="htmx-indicator text-muted text-sm">updating...</span>
+    </div>
+    <div id="live-activity"
+         hx-get="/partials/live-activity"
+         hx-trigger="load, refresh, every 10s"
+         hx-swap="innerHTML">
+        <p class="text-muted">No active pipelines. Start one from the CLI or project page.</p>
+    </div>
+</div>
+
+<!-- Recent projects -->
+<div class="panel rounded-lg p-6 mb-8">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold">Recent Projects</h2>
+        <a href="/projects" class="text-sm accent-teal hover:underline">View all</a>
+    </div>
+    <div id="projects-list"
+         hx-get="/partials/recent-projects"
+         hx-trigger="load, refresh, every 30s"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading projects...</p>
+    </div>
+</div>
+
+<!-- Quick start -->
 <div class="panel rounded-lg p-6">
-    <h2 class="text-xl font-semibold mb-4">Recent Productions</h2>
-    <p class="text-muted">No productions yet. Start one with:</p>
-    <code class="block mt-2 panel-mid rounded px-4 py-2 text-sm">
-        mindarchive produce --topic "Dark Triad" --profile mindarchive --format documentary
-    </code>
+    <h2 class="text-xl font-semibold mb-4">Quick Start</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="panel-mid rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-2 accent-teal">Start Production (CLI)</h3>
+            <code class="block text-xs text-muted">mindarchive produce --topic "Dark Triad" --profile mindarchive --format documentary</code>
+        </div>
+        <div class="panel-mid rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-2 accent-gold">Distribute</h3>
+            <code class="block text-xs text-muted">mindarchive distribute my-project --privacy private</code>
+        </div>
+    </div>
 </div>
 {% endblock %}

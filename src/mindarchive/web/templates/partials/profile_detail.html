@@ -1,0 +1,78 @@
+<!-- Profile detail drawer content -->
+<div class="fixed inset-0 z-40 flex justify-end modal-overlay"
+     onclick="if(event.target===this) document.getElementById('profile-drawer').innerHTML=''">
+    <div class="panel w-full max-w-lg h-full overflow-y-auto p-6 border-l border-gray-700">
+        <div class="flex items-center justify-between mb-6">
+            <h2 class="text-xl font-bold">{{ profile.name }}</h2>
+            <button class="text-muted hover:text-white"
+                    onclick="document.getElementById('profile-drawer').innerHTML=''">&#10005;</button>
+        </div>
+
+        <div class="space-y-4">
+            <div class="panel-mid rounded-lg p-4">
+                <p class="text-xs text-muted mb-1">Slug</p>
+                <p class="font-mono text-sm">{{ profile.slug }}</p>
+            </div>
+            <div class="panel-mid rounded-lg p-4">
+                <p class="text-xs text-muted mb-1">Niche</p>
+                <p>{{ profile.niche }}</p>
+            </div>
+            {% if profile.description %}
+            <div class="panel-mid rounded-lg p-4">
+                <p class="text-xs text-muted mb-1">Description</p>
+                <p class="text-sm">{{ profile.description }}</p>
+            </div>
+            {% endif %}
+
+            <h3 class="text-sm font-semibold text-muted mt-6">Voice Settings</h3>
+            <div class="panel-mid rounded-lg p-4">
+                {% if profile.voice_locked %}
+                <p class="accent-teal text-sm mb-2">&#10003; Voice Locked</p>
+                <div class="grid grid-cols-2 gap-2 text-xs text-muted">
+                    <p>Name: {{ profile.voice_name or '-' }}</p>
+                    <p>Model: {{ profile.voice_model or '-' }}</p>
+                    <p>Stability: {{ profile.voice_stability or '-' }}</p>
+                    <p>Similarity: {{ profile.voice_similarity or '-' }}</p>
+                    <p>WPM: {{ profile.voice_base_wpm or '-' }}</p>
+                    <p>Style: {{ profile.voice_style or '-' }}</p>
+                </div>
+                {% else %}
+                <p class="text-muted text-sm">&#9675; Not configured — Step 4 will design voice</p>
+                {% endif %}
+            </div>
+
+            <h3 class="text-sm font-semibold text-muted mt-6">Brand Settings</h3>
+            <div class="panel-mid rounded-lg p-4">
+                {% if profile.brand_locked %}
+                <p class="accent-teal text-sm">&#10003; Brand Locked</p>
+                {% else %}
+                <p class="text-muted text-sm">&#9675; Not configured — Step 7 will design brand</p>
+                {% endif %}
+            </div>
+
+            <h3 class="text-sm font-semibold text-muted mt-6">Production Defaults</h3>
+            <div class="panel-mid rounded-lg p-4 text-sm">
+                <div class="grid grid-cols-2 gap-2 text-muted">
+                    <p>Format: {{ profile.default_format }}</p>
+                    <p>Model: {{ profile.default_model }}</p>
+                    <p>Runway max: {{ profile.runway_max_scenes }}</p>
+                    <p>Published: {{ profile.published_count or 0 }}</p>
+                </div>
+            </div>
+
+            {% if profile.tone_instruction %}
+            <div class="panel-mid rounded-lg p-4">
+                <p class="text-xs text-muted mb-1">Tone</p>
+                <p class="text-sm">{{ profile.tone_instruction }}</p>
+            </div>
+            {% endif %}
+
+            {% if profile.visual_style %}
+            <div class="panel-mid rounded-lg p-4">
+                <p class="text-xs text-muted mb-1">Visual Style</p>
+                <p class="text-sm">{{ profile.visual_style }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>

@@ -1,0 +1,46 @@
+{% if projects %}
+<div class="overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-muted text-left border-b border-gray-700">
+                <th class="pb-2 pr-4">Project</th>
+                <th class="pb-2 pr-4">Profile</th>
+                <th class="pb-2 pr-4">Format</th>
+                <th class="pb-2 pr-4">Status</th>
+                <th class="pb-2 pr-4">Step</th>
+                <th class="pb-2">Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in projects %}
+            <tr class="border-b border-gray-800 hover:bg-white/5 cursor-pointer"
+                hx-get="/projects/{{ p.slug }}"
+                hx-push-url="true"
+                hx-target="main"
+                hx-swap="innerHTML">
+                <td class="py-3 pr-4">
+                    <span class="font-medium">{{ p.title or p.slug }}</span>
+                    <br><span class="text-muted text-xs">{{ p.topic[:60] }}{% if p.topic|length > 60 %}...{% endif %}</span>
+                </td>
+                <td class="py-3 pr-4 text-muted">{{ p.profile }}</td>
+                <td class="py-3 pr-4 text-muted">{{ p.format }}</td>
+                <td class="py-3 pr-4">
+                    <span class="badge badge-{{ p.status }}">{{ p.status }}</span>
+                </td>
+                <td class="py-3 pr-4">
+                    {% if p.current_step %}
+                    <span class="accent-teal">{{ p.current_step }}/15</span>
+                    {% else %}
+                    <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+                <td class="py-3 text-muted text-xs">{{ p.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No projects yet. Start a production from the CLI:</p>
+<code class="block mt-2 panel-mid rounded px-4 py-2 text-xs">mindarchive produce --topic "Your Topic" --profile mindarchive --format documentary</code>
+{% endif %}

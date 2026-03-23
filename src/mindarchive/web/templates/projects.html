@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Projects — MindArchive{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-8">
+    <h1 class="text-3xl font-bold">Projects</h1>
+    <div class="flex items-center gap-3">
+        <!-- Filter buttons -->
+        <div class="flex gap-1 text-sm">
+            <button class="px-3 py-1 rounded {% if status_filter == 'all' %}bg-accent-teal text-black{% else %}panel text-muted hover:text-white{% endif %}"
+                    hx-get="/projects?status=all" hx-push-url="true" hx-target="main" hx-swap="innerHTML">All</button>
+            <button class="px-3 py-1 rounded {% if status_filter == 'running' %}bg-accent-teal text-black{% else %}panel text-muted hover:text-white{% endif %}"
+                    hx-get="/projects?status=running" hx-push-url="true" hx-target="main" hx-swap="innerHTML">Running</button>
+            <button class="px-3 py-1 rounded {% if status_filter == 'complete' %}bg-accent-teal text-black{% else %}panel text-muted hover:text-white{% endif %}"
+                    hx-get="/projects?status=complete" hx-push-url="true" hx-target="main" hx-swap="innerHTML">Complete</button>
+            <button class="px-3 py-1 rounded {% if status_filter == 'paused' %}bg-accent-teal text-black{% else %}panel text-muted hover:text-white{% endif %}"
+                    hx-get="/projects?status=paused" hx-push-url="true" hx-target="main" hx-swap="innerHTML">Paused</button>
+            <button class="px-3 py-1 rounded {% if status_filter == 'error' %}bg-accent-teal text-black{% else %}panel text-muted hover:text-white{% endif %}"
+                    hx-get="/projects?status=error" hx-push-url="true" hx-target="main" hx-swap="innerHTML">Errors</button>
+        </div>
+    </div>
+</div>
+
+<div class="panel rounded-lg p-6">
+    <div id="projects-table"
+         hx-get="/partials/recent-projects?limit=100{% if status_filter and status_filter != 'all' %}&status={{ status_filter }}{% endif %}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading...</p>
+    </div>
+</div>
+{% endblock %}

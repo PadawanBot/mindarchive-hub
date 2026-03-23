@@ -1,0 +1,52 @@
+{% if distribution %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- YouTube -->
+    <div class="panel-mid rounded-lg p-4">
+        <h3 class="text-sm font-semibold mb-3 accent-teal">YouTube Upload (D1)</h3>
+        {% if distribution.youtube_url %}
+        <p class="text-sm mb-2">
+            <span class="text-muted">URL:</span>
+            <a href="{{ distribution.youtube_url }}" target="_blank" class="accent-teal hover:underline">{{ distribution.youtube_url }}</a>
+        </p>
+        <p class="text-xs text-muted">ID: {{ distribution.youtube_video_id }}</p>
+        <p class="text-xs text-muted">Status: {{ distribution.youtube_processing or 'unknown' }}</p>
+        {% else %}
+        <p class="text-sm text-muted">Not uploaded yet</p>
+        {% endif %}
+    </div>
+
+    <!-- Google Drive -->
+    <div class="panel-mid rounded-lg p-4">
+        <h3 class="text-sm font-semibold mb-3 accent-gold">Google Drive Backup (D2)</h3>
+        {% if distribution.drive_folder_id %}
+        <p class="text-sm accent-gold">Backed up</p>
+        <p class="text-xs text-muted">Folder ID: {{ distribution.drive_folder_id }}</p>
+        {% else %}
+        <p class="text-sm text-muted">Not backed up yet</p>
+        {% endif %}
+    </div>
+
+    <!-- Vizard -->
+    <div class="panel-mid rounded-lg p-4">
+        <h3 class="text-sm font-semibold mb-3 accent-purple">Vizard Shorts (D3)</h3>
+        {% if distribution.vizard_clips %}
+        <p class="text-sm accent-purple">{{ distribution.vizard_clips }} clips generated</p>
+        {% else %}
+        <p class="text-sm text-muted">No clips generated yet</p>
+        {% endif %}
+    </div>
+
+    <!-- Buffer -->
+    <div class="panel-mid rounded-lg p-4">
+        <h3 class="text-sm font-semibold mb-3 text-blue-400">Buffer Social (D4)</h3>
+        {% if distribution.buffer_posts %}
+        <p class="text-sm text-blue-400">{{ distribution.buffer_posts }} posts scheduled</p>
+        {% else %}
+        <p class="text-sm text-muted">No social posts scheduled</p>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<p class="text-muted">Distribution not started. Run:</p>
+<code class="block mt-2 panel-mid rounded px-4 py-2 text-xs">mindarchive distribute {{ project_slug }}</code>
+{% endif %}
