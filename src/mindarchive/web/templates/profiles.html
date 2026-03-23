@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Profiles — MindArchive{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-8">
+    <h1 class="text-3xl font-bold">Channel Profiles</h1>
+    <button class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+        + Create Profile
+    </button>
+</div>
+
+{% if profiles %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for p in profiles %}
+    <div class="panel rounded-lg p-6">
+        <h3 class="text-lg font-semibold mb-1">{{ p.name }}</h3>
+        <p class="text-muted text-sm mb-3">{{ p.niche }}</p>
+        <div class="space-y-1 text-sm">
+            <p>
+                {% if p.voice_locked %}
+                    <span class="accent-teal">&#10003;</span> Voice: {{ p.voice_name }}
+                {% else %}
+                    <span class="text-muted">&#9675;</span> Voice: Not configured
+                {% endif %}
+            </p>
+            <p>
+                {% if p.brand_locked %}
+                    <span class="accent-teal">&#10003;</span> Brand: Locked
+                {% else %}
+                    <span class="text-muted">&#9675;</span> Brand: Not configured
+                {% endif %}
+            </p>
+            <p class="text-muted">Format: {{ p.default_format }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="panel rounded-lg p-6 text-center text-muted">
+    <p>No profiles found. Create one to get started.</p>
+    <code class="block mt-2 text-sm">mindarchive profile create --name "MindArchive" --niche "psychology"</code>
+</div>
+{% endif %}
+{% endblock %}

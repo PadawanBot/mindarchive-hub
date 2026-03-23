@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Formats — MindArchive{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-8">
+    <h1 class="text-3xl font-bold">Format Library</h1>
+    <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+        + Custom Format
+    </button>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for p in presets %}
+    <div class="panel rounded-lg p-6">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg font-semibold">{{ p.name }}</h3>
+            {% if p.builtin %}
+            <span class="text-xs text-muted panel-mid px-2 py-1 rounded">built-in</span>
+            {% else %}
+            <span class="text-xs accent-gold panel-mid px-2 py-1 rounded">custom</span>
+            {% endif %}
+        </div>
+        <p class="text-muted text-sm mb-3">{{ p.description }}</p>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+            <div>
+                <span class="text-muted">Duration:</span>
+                <span>{{ p.duration_range_min }}-{{ p.duration_range_max }} min</span>
+            </div>
+            <div>
+                <span class="text-muted">Words:</span>
+                <span>{{ p.target_words }}</span>
+            </div>
+            <div>
+                <span class="text-muted">WPM:</span>
+                <span>{{ p.base_wpm }}</span>
+            </div>
+            <div>
+                <span class="text-muted">Runway:</span>
+                <span>max {{ p.runway_max_scenes }}</span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
