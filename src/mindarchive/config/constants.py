@@ -86,9 +86,18 @@ PHASE_STEP_MAP: dict[str, list[int]] = {
     PHASE_PREPRODUCTION: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     PHASE_PRODUCTION: [],   # P1-P5 (not numbered as steps)
     PHASE_ASSEMBLY: [],     # P6-P7
-    PHASE_DISTRIBUTION: [], # D1-D5
+    PHASE_DISTRIBUTION: [],  # D1-D5 (separate pipeline, not numbered steps)
     PHASE_STRATEGY: [14, 15],
 }
+
+# Distribution steps (run via `mindarchive distribute`)
+DIST_YOUTUBE_UPLOAD = "D1"
+DIST_GDRIVE_BACKUP = "D2"
+DIST_VIZARD_REPURPOSE = "D3"
+DIST_BUFFER_SCHEDULE = "D4"
+DIST_POST_LAUNCH = "D5"
+
+ALL_DIST_STEPS: list[str] = ["D1", "D2", "D3", "D4", "D5"]
 
 # App directories
 APP_DIR_NAME: str = ".mindarchive"

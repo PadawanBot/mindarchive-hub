@@ -159,6 +159,83 @@ def thumbnail(
 
 
 @app.command()
+def distribute(
+    project_slug: str = typer.Argument(..., help="Project slug to distribute"),
+    skip: Optional[str] = typer.Option(None, "--skip", help="Steps to skip: D1,D2,D3,D4,D5"),
+    privacy: str = typer.Option("private", "--privacy", help="YouTube privacy: private, unlisted, public"),
+) -> None:
+    """Run distribution pipeline (D1-D5) for a completed project."""
+    import asyncio
+
+    from mindarchive.config.settings import get_settings
+
+    settings = get_settings()
+    project_dir = settings.projects_dir / project_slug
+
+    if not project_dir.exists():
+        console.print(f"[red]Project not found: {project_slug}[/red]")
+        raise typer.Exit(1)
+
+    skip_steps = set(s.strip().upper() for s in skip.split(",")) if skip else set()
+
+    from mindarchive.distribution.orchestrator import (
+        DistributionContext,
+        DistributionOrchestrator,
+    )
+
+    def on_event(step_id: str, status: str, data: dict) -> None:
+        msg = data.get("message", "")
+        if status == "start":
+            console.print(f"\n[cyan]▶ {step_id}: {msg}[/cyan]")
+        elif status == "complete":
+            console.print(f"[green]  ✓ {msg}[/green]")
+        elif status == "error":
+            console.print(f"[red]  ✗ {msg}[/red]")
+        elif status == "skip":
+            console.print(f"[dim]  ⊘ {msg}[/dim]")
+
+    orch = DistributionOrchestrator(settings=settings, event_callback=on_event)
+
+    # Build minimal context from project directory
+    ctx = DistributionContext(
+        project_slug=project_slug,
+        project_dir=project_dir,
+        privacy=privacy,
+    )
+
+    # Try to load metadata
+    meta_path = project_dir / "metadata" / "upload_blueprint.json"
+    if meta_path.exists():
+        import json
+        bp = json.loads(meta_path.read_text())
+        ctx.video_title = bp.get("title", project_slug)
+        ctx.video_description = bp.get("description", "")
+        ctx.video_tags = bp.get("tags", [])
+        ctx.hashtags = bp.get("hashtags", [])
+
+    # Find final video
+    video_dir = project_dir / "video"
+    if video_dir.exists():
+        mp4s = list(video_dir.glob("*_final.mp4"))
+        if mp4s:
+            ctx.final_video_path = mp4s[0]
+
+    # Find thumbnail
+    thumb = project_dir / "thumbnails" / "thumbnail.jpg"
+    if thumb.exists():
+        ctx.thumbnail_path = thumb
+
+    results = asyncio.run(orch.run(ctx, skip_steps=skip_steps))
+
+    completed = sum(1 for r in results if r.status == "complete")
+    errors = sum(1 for r in results if r.status == "error")
+    console.print(f"\n[bold]Distribution:[/bold] {completed} complete, {errors} errors")
+
+    if ctx.youtube_url:
+        console.print(f"[bold green]YouTube:[/bold green] {ctx.youtube_url}")
+
+
+@app.command()
 def schedule(
     profile: str = typer.Option("mindarchive", "--profile", "-p", help="Channel profile"),
 ) -> None:
