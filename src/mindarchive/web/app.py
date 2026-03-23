@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sse_starlette.sse import EventSourceResponse
 
 from mindarchive import __version__
 
@@ -73,5 +74,56 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "version": __version__}
+
+    @app.get("/api/events")
+    async def sse_events() -> EventSourceResponse:
+        """SSE endpoint for real-time pipeline event streaming."""
+        from mindarchive.web.events import subscribe
+
+        return EventSourceResponse(subscribe())
+
+    @app.get("/api/projects")
+    async def api_projects() -> list[dict]:
+        """List projects as JSON."""
+        from mindarchive.config.settings import get_settings
+        from mindarchive.models.database import get_database
+        from mindarchive.services.project_manager import ProjectManager
+
+        settings = get_settings()
+        db = get_database(settings)
+        with db.session() as session:
+            mgr = ProjectManager(session, settings)
+            projects = mgr.list_projects()
+            return [
+                {
+                    "slug": p.slug,
+                    "title": p.title,
+                    "topic": p.topic,
+                    "profile": p.profile_slug,
+                    "format": p.format_preset,
+                    "status": p.status,
+                    "current_step": p.current_step,
+                }
+                for p in projects
+            ]
+
+    @app.get("/api/formats")
+    async def api_formats() -> list[dict]:
+        """List format presets as JSON."""
+        from mindarchive.config.settings import get_settings
+        from mindarchive.formats.presets import list_presets
+
+        settings = get_settings()
+        presets = list_presets(settings.formats_dir)
+        return [
+            {
+                "slug": p.slug,
+                "name": p.name,
+                "duration": f"{p.duration_range_min}-{p.duration_range_max} min",
+                "target_words": p.target_words,
+                "builtin": p.builtin,
+            }
+            for p in presets
+        ]
 
     return app

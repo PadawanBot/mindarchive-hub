@@ -2,6 +2,7 @@
 
 from mindarchive.models.asset import AssetRecord
 from mindarchive.models.base import Base, create_tables
+from mindarchive.models.database import Database, get_database
 from mindarchive.models.channel_profile import ChannelProfile
 from mindarchive.models.cost import CostLedger
 from mindarchive.models.format_preset import FormatPreset
@@ -14,6 +15,7 @@ __all__ = [
     "AssetRecord",
     "Approval",
     "Base",
+    "Database",
     "ChannelProfile",
     "CostLedger",
     "FormatPreset",

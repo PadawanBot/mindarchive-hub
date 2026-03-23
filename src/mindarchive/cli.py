@@ -61,18 +61,26 @@ def produce(
         _show_dry_run(topic, profile, preset.name, mode, model, settings)
         return
 
-    console.print(Panel(
-        f"[bold]Profile:[/bold] {profile}\n"
-        f"[bold]Format:[/bold]  {preset.name} ({preset.target_duration_min} min, "
-        f"{preset.target_words} words, {preset.base_wpm} WPM)\n"
-        f"[bold]Topic:[/bold]   {topic}\n"
-        f"[bold]Mode:[/bold]    {mode}  │  [bold]Model:[/bold] {model}",
-        title="[bold cyan]MindArchive Production Hub[/bold cyan]",
-        border_style="cyan",
-    ))
+    from mindarchive.pipeline.runner import PipelineRunner
 
-    console.print("\n[yellow]Pipeline engine not yet implemented (Phase B).[/yellow]")
-    console.print("Run [bold]mindarchive produce --dry-run[/bold] to validate setup.\n")
+    runner = PipelineRunner(settings)
+    results = runner.run_cli(
+        topic=topic,
+        profile_slug=profile,
+        format_slug=format,
+        mode=mode,
+        model=model,
+    )
+
+    if not results:
+        console.print("[red]Pipeline did not produce any results.[/red]")
+        raise typer.Exit(1)
+
+    # Summary
+    completed = sum(1 for r in results.values() if r.status == "complete")
+    skipped = sum(1 for r in results.values() if r.status == "skipped")
+    errors = sum(1 for r in results.values() if r.status == "error")
+    console.print(f"\n[bold]Results:[/bold] {completed} complete, {skipped} skipped, {errors} errors")
 
 
 @app.command()
