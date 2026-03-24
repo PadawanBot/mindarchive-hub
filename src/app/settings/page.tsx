@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const [visibility, setVisibility] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, "success" | "error" | null>>({});
 
   useEffect(() => {
@@ -39,6 +40,7 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
@@ -49,7 +51,11 @@ export default function SettingsPage() {
       if (data.success) {
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
+      } else {
+        setSaveError(data.error || "Failed to save settings");
       }
+    } catch (err) {
+      setSaveError(String(err));
     } finally {
       setSaving(false);
     }
@@ -220,6 +226,11 @@ export default function SettingsPage() {
         {saved && (
           <span className="text-sm text-success flex items-center gap-1">
             <CheckCircle className="h-4 w-4" /> Settings saved
+          </span>
+        )}
+        {saveError && (
+          <span className="text-sm text-red-500 flex items-center gap-1">
+            <AlertCircle className="h-4 w-4" /> {saveError}
           </span>
         )}
       </div>

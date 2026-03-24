@@ -116,7 +116,7 @@ export async function create<T extends { id: string }>(
       .insert(item)
       .select()
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`[store] create(${collection}): ${error.message}`);
     return data as T;
   }
   const store = await getLocalStore();
@@ -212,11 +212,13 @@ export async function setSetting(key: string, value: string): Promise<void> {
       .from("settings")
       .select("id")
       .eq("key", key)
-      .single();
+      .maybeSingle();
     if (existing) {
-      await sb.from("settings").update({ value, updated_at: new Date().toISOString() }).eq("key", key);
+      const { error } = await sb.from("settings").update({ value, updated_at: new Date().toISOString() }).eq("key", key);
+      if (error) throw new Error(`[store] setSetting update(${key}): ${error.message}`);
     } else {
-      await sb.from("settings").insert({ key, value });
+      const { error } = await sb.from("settings").insert({ key, value });
+      if (error) throw new Error(`[store] setSetting insert(${key}): ${error.message}`);
     }
     return;
   }
