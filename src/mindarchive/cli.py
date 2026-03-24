@@ -389,6 +389,64 @@ def config_validate() -> None:
     console.print(table)
 
 
+@config_app.command("test-key")
+def config_test_key(
+    model: str = typer.Option("claude-sonnet-4-6", "--model", help="Model to test with"),
+) -> None:
+    """Test the Anthropic API key with a minimal API call."""
+    import asyncio
+
+    from mindarchive.config.settings import CredentialStore, get_settings
+
+    settings = get_settings()
+    store = CredentialStore(settings.credentials_path)
+    api_key = (store.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key or "").strip()
+
+    if not api_key:
+        console.print("[red]ANTHROPIC_API_KEY not configured. Run: mindarchive config set ANTHROPIC_API_KEY[/red]")
+        raise typer.Exit(1)
+
+    masked = api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:] if len(api_key) > 16 else "****"
+    console.print(f"  Key:   {masked}")
+    console.print(f"  Model: {model}")
+    console.print("  Testing...")
+
+    async def _test() -> None:
+        from anthropic import APIStatusError, AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=api_key)
+        try:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=32,
+                messages=[{"role": "user", "content": "Say 'OK' and nothing else."}],
+            )
+            text = ""
+            for block in response.content:
+                if hasattr(block, "text"):
+                    text += block.text
+            console.print(f"[green]  ✓ API key is working![/green]")
+            console.print(f"    Model:    {response.model}")
+            console.print(f"    Response: {text.strip()}")
+            console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
+        except APIStatusError as e:
+            console.print(f"[red]  ✗ API error: HTTP {e.status_code}[/red]")
+            console.print(f"    Message: {e.message}")
+            if e.body:
+                console.print(f"    Body:    {e.body}")
+            if e.response is not None:
+                try:
+                    console.print(f"    Response: {e.response.text}")
+                except Exception:
+                    pass
+            raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]  ✗ Connection error: {e}[/red]")
+            raise typer.Exit(1)
+
+    asyncio.run(_test())
+
+
 # ═══════════════════════════════════════════════════════════
 # Profile sub-commands
 # ═══════════════════════════════════════════════════════════
