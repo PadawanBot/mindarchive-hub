@@ -395,14 +395,10 @@ def config_test_key(
     model: str = typer.Option("claude-sonnet-4-6", "--model", help="Model to test with"),
 ) -> None:
     """Test the Anthropic API key with a minimal API call."""
-    import json as _json
     import platform
     import socket
     import ssl
-    import subprocess
     import sys
-    import urllib.error
-    import urllib.request
 
     from mindarchive.config.settings import CredentialStore, get_settings
 
@@ -456,122 +452,35 @@ def config_test_key(
     except Exception as e:
         console.print(f"    [red]TLS failed: {type(e).__name__}: {e}[/red]")
 
-    console.print("\n  Testing...")
+    console.print("\n  Testing via curl.exe backend...")
 
-    import httpx
-    import anthropic as _anthropic
-    from anthropic import APIStatusError, Anthropic
+    from mindarchive.providers.anthropic_llm import _curl_request, _needs_curl_backend
 
-    console.print(f"    SDK ver:  {getattr(_anthropic, '__version__', 'unknown')}")
-    console.print(f"    httpx:    {httpx.__version__}")
+    use_curl = _needs_curl_backend()
+    console.print(f"    Backend: {'curl.exe' if use_curl else 'Anthropic SDK'}")
 
-    api_url = "https://api.anthropic.com/v1/messages"
-    test_body = {
-        "model": model, "max_tokens": 32,
-        "messages": [{"role": "user", "content": "Say OK"}],
-    }
-    api_headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
+    if not use_curl:
+        console.print("    [dim]Not on Windows or curl.exe not found, using SDK[/dim]")
 
-    # --- Test 1: curl.exe with --ssl-no-revoke (known working) ---
-    console.print("\n  [dim]── Test 1: curl.exe (subprocess) ──[/dim]")
-    import tempfile
-    body_file = Path(tempfile.gettempdir()) / "mindarchive_test.json"
-    body_file.write_text(_json.dumps(test_body), encoding="utf-8")
     try:
-        result = subprocess.run(
-            [
-                "curl.exe", "--ssl-no-revoke", "-s", "-w", "\n%{http_code}",
-                api_url,
-                "-H", f"x-api-key: {api_key}",
-                "-H", "anthropic-version: 2023-06-01",
-                "-H", "content-type: application/json",
-                "-d", f"@{body_file}",
-            ],
-            capture_output=True, text=True, timeout=30,
+        data = _curl_request(
+            api_key=api_key,
+            payload={
+                "model": model,
+                "max_tokens": 32,
+                "messages": [{"role": "user", "content": "Say 'OK' and nothing else."}],
+            },
+            timeout=30,
         )
-        lines = result.stdout.strip().rsplit("\n", 1)
-        body_text = lines[0] if len(lines) > 1 else result.stdout
-        status_code = lines[-1].strip() if len(lines) > 1 else "?"
-        console.print(f"    HTTP {status_code}: {body_text[:300]}")
-        if status_code == "200":
-            console.print("    [green]✓ curl.exe works![/green]")
-        if result.stderr:
-            console.print(f"    stderr: {result.stderr[:200]}")
-    except FileNotFoundError:
-        console.print("    [dim]curl.exe not found, skipping[/dim]")
-    except Exception as e:
-        console.print(f"    [red]error: {type(e).__name__}: {e}[/red]")
-    finally:
-        body_file.unlink(missing_ok=True)
-
-    # --- Test 2: httpx with custom SSL ciphers ---
-    console.print("\n  [dim]── Test 2: httpx + custom SSL ciphers ──[/dim]")
-    try:
-        ctx = ssl.create_default_context()
-        # Chrome 120+ cipher suite order
-        ctx.set_ciphers(
-            "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:"
-            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
-            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
-        )
-        with httpx.Client(http2=True, verify=ctx) as http:
-            resp = http.post(api_url, json=test_body, headers=api_headers, timeout=30.0)
-            console.print(f"    HTTP {resp.status_code}: {resp.text[:300]}")
-            if resp.status_code == 200:
-                console.print("    [green]✓ custom SSL works![/green]")
-    except Exception as e:
-        console.print(f"    [red]✗ {type(e).__name__}: {e}[/red]")
-
-    # --- Test 3: httpx without SSL verification (diagnostic only) ---
-    console.print("\n  [dim]── Test 3: httpx + verify=False (diagnostic) ──[/dim]")
-    try:
-        with httpx.Client(http2=True, verify=False) as http:
-            resp = http.post(api_url, json=test_body, headers=api_headers, timeout=30.0)
-            console.print(f"    HTTP {resp.status_code}: {resp.text[:300]}")
-            if resp.status_code == 200:
-                console.print("    [green]✓ verify=False works![/green]")
-    except Exception as e:
-        console.print(f"    [red]✗ {type(e).__name__}: {e}[/red]")
-
-    # --- Test 4: Anthropic SDK ---
-    console.print("\n  [dim]── Test 4: Anthropic SDK ──[/dim]")
-    # Try with custom SSL context + HTTP/2
-    try:
-        ctx2 = ssl.create_default_context()
-        ctx2.set_ciphers(
-            "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:"
-            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
-            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
-        )
-        sdk_http = httpx.Client(http2=True, verify=ctx2)
-        client = Anthropic(api_key=api_key, http_client=sdk_http)
-
-        response = client.messages.create(
-            model=model,
-            max_tokens=32,
-            messages=[{"role": "user", "content": "Say 'OK' and nothing else."}],
-        )
-        text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                text += block.text
+        text = data.get("content", [{}])[0].get("text", "")
+        usage = data.get("usage", {})
         console.print(f"[green]  ✓ API key is working![/green]")
-        console.print(f"    Model:    {response.model}")
-        console.print(f"    Response: {text.strip()}")
-        console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
-    except APIStatusError as e:
-        console.print(f"[red]  ✗ SDK error: HTTP {e.status_code}[/red]")
-        console.print(f"    Body: {repr(e.body)}")
-        if e.response is not None:
-            console.print(f"    Headers: {dict(e.response.headers)}")
+        console.print(f"    Model:    {data.get('model', '?')}")
+        console.print(f"    Response: {text}")
+        console.print(f"    Tokens:   {usage.get('input_tokens', 0)} in / {usage.get('output_tokens', 0)} out")
     except Exception as e:
         console.print(f"[red]  ✗ {type(e).__name__}: {e}[/red]")
+        raise typer.Exit(1)
 
 
 # ═══════════════════════════════════════════════════════════
