@@ -40,21 +40,28 @@ export interface FormatPreset {
 
 // ─── Pipeline ───
 export type PipelineStep =
+  // Pre-production (steps 1-13)
   | "topic_research"
   | "script_writing"
-  | "hook_generation"
+  | "hook_engineering"
   | "voice_selection"
   | "visual_direction"
-  | "stock_footage"
+  | "blend_curator"
   | "brand_assets"
   | "script_refinement"
-  | "voiceover_generation"
+  | "timing_sync"
   | "thumbnail_creation"
-  | "retention_optimization"
-  | "engagement_hooks"
-  | "seo_metadata"
-  | "scheduling"
-  | "video_assembly";
+  | "retention_structure"
+  | "comment_magnet"
+  | "upload_blueprint"
+  // Production (steps 14-18)
+  | "voiceover_generation"
+  | "image_generation"
+  | "stock_footage"
+  | "motion_graphics"
+  | "hero_scenes";
+
+export type PipelinePhase = "pre_production" | "production";
 
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -65,10 +72,14 @@ export interface StepResult {
   error?: string;
   cost_cents?: number;
   duration_ms?: number;
+  project_id?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at?: string;
 }
 
 // ─── Project ───
-export type ProjectStatus = "draft" | "researching" | "scripting" | "producing" | "assembling" | "completed" | "failed";
+export type ProjectStatus = "draft" | "pre_production" | "production" | "completed" | "failed" | "paused";
 
 export interface Project {
   id: string;

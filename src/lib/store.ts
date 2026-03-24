@@ -248,3 +248,69 @@ export async function getAllSettings(): Promise<Record<string, string>> {
   const settings = await store.read<SettingRecord>("settings.json");
   return Object.fromEntries(settings.map((s) => [s.key, s.value]));
 }
+
+// ─── Pipeline Step Helpers ───
+
+import type { StepResult } from "@/types";
+
+export async function getStepsByProject(projectId: string): Promise<StepResult[]> {
+  const sb = getSupabase();
+  if (sb) {
+    const { data, error } = await sb
+      .from(tableName("pipeline_steps"))
+      .select("*")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true });
+    if (error) {
+      console.error(`[store] getStepsByProject(${projectId}) error:`, error.message);
+      return [];
+    }
+    return (data || []) as StepResult[];
+  }
+  const store = await getLocalStore();
+  const allSteps = await store.read<StepResult & { project_id: string }>("pipeline_steps.json");
+  return allSteps
+    .filter((s) => s.project_id === projectId)
+    .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+}
+
+export async function upsertStep(
+  projectId: string,
+  step: string,
+  data: Partial<StepResult>
+): Promise<StepResult> {
+  const sb = getSupabase();
+  if (sb) {
+    const payload = {
+      ...data,
+      project_id: projectId,
+      step,
+    };
+    const { data: result, error } = await sb
+      .from(tableName("pipeline_steps"))
+      .upsert(payload, { onConflict: "project_id,step" })
+      .select()
+      .single();
+    if (error) throw new Error(`[store] upsertStep(${projectId}, ${step}): ${error.message}`);
+    return result as StepResult;
+  }
+  const store = await getLocalStore();
+  const allSteps = await store.read<StepResult & { id: string; project_id: string }>("pipeline_steps.json");
+  const now = new Date().toISOString();
+  const index = allSteps.findIndex((s) => s.project_id === projectId && s.step === step);
+  if (index >= 0) {
+    allSteps[index] = { ...allSteps[index], ...data, project_id: projectId, step: step as StepResult["step"] };
+  } else {
+    allSteps.push({
+      id: store.randomId(),
+      project_id: projectId,
+      step: step as StepResult["step"],
+      status: "pending",
+      created_at: now,
+      ...data,
+    } as StepResult & { id: string; project_id: string });
+  }
+  await store.write("pipeline_steps.json", allSteps);
+  const saved = allSteps.find((s) => s.project_id === projectId && s.step === step);
+  return saved as StepResult;
+}
