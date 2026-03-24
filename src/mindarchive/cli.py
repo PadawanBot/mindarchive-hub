@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -394,6 +395,15 @@ def config_test_key(
     model: str = typer.Option("claude-sonnet-4-6", "--model", help="Model to test with"),
 ) -> None:
     """Test the Anthropic API key with a minimal API call."""
+    import json as _json
+    import platform
+    import socket
+    import ssl
+    import subprocess
+    import sys
+    import urllib.error
+    import urllib.request
+
     from mindarchive.config.settings import CredentialStore, get_settings
 
     console.print(f"  [dim]mindarchive v{__version__}[/dim]")
@@ -408,14 +418,76 @@ def config_test_key(
 
     masked = api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:] if len(api_key) > 16 else "****"
     console.print(f"  Key:   {masked}")
+    console.print(f"  Key length: {len(api_key)} chars")
     console.print(f"  Model: {model}")
-    console.print("  Testing...")
 
-    import json as _json
-    import urllib.request
-    import urllib.error
+    # --- Environment diagnostics ---
+    console.print("\n  [dim]── Environment ──[/dim]")
+    console.print(f"    Python:   {sys.version}")
+    console.print(f"    Platform: {platform.platform()}")
+    console.print(f"    OpenSSL:  {ssl.OPENSSL_VERSION}")
 
-    # --- Test 1: stdlib urllib (no httpx dependency) ---
+    # Check for proxy settings
+    proxy_vars = {k: v for k, v in os.environ.items()
+                  if any(p in k.lower() for p in ["proxy", "https_proxy", "http_proxy", "no_proxy"])}
+    if proxy_vars:
+        console.print(f"    [yellow]Proxy env vars detected:[/yellow]")
+        for k, v in proxy_vars.items():
+            console.print(f"      {k} = {v}")
+    else:
+        console.print("    Proxy: none detected in env")
+
+    # DNS resolution check
+    try:
+        ip = socket.getaddrinfo("api.anthropic.com", 443)[0][4][0]
+        console.print(f"    DNS:    api.anthropic.com → {ip}")
+    except Exception as e:
+        console.print(f"    [red]DNS failed: {e}[/red]")
+
+    # TLS certificate check
+    try:
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname="api.anthropic.com") as s:
+            s.settimeout(10)
+            s.connect(("api.anthropic.com", 443))
+            cert = s.getpeercert()
+            issuer = dict(x[0] for x in cert.get("issuer", []))
+            console.print(f"    TLS:    ✓ connected, cert issuer: {issuer.get('organizationName', 'unknown')}")
+    except Exception as e:
+        console.print(f"    [red]TLS failed: {type(e).__name__}: {e}[/red]")
+
+    console.print("\n  Testing...")
+
+    # --- Test 1: curl (if available) ---
+    console.print("\n  [dim]── curl test (subprocess) ──[/dim]")
+    curl_payload = _json.dumps({
+        "model": model, "max_tokens": 32,
+        "messages": [{"role": "user", "content": "Say OK"}],
+    })
+    try:
+        result = subprocess.run(
+            [
+                "curl", "-s", "-w", "\n%{http_code}",
+                "https://api.anthropic.com/v1/messages",
+                "-H", f"x-api-key: {api_key}",
+                "-H", "anthropic-version: 2023-06-01",
+                "-H", "content-type: application/json",
+                "-d", curl_payload,
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        lines = result.stdout.strip().rsplit("\n", 1)
+        body_text = lines[0] if len(lines) > 1 else result.stdout
+        status_code = lines[-1] if len(lines) > 1 else "?"
+        console.print(f"    curl HTTP {status_code}: {body_text[:300]}")
+        if status_code == "200":
+            console.print("    [green]✓ curl works![/green]")
+    except FileNotFoundError:
+        console.print("    [dim]curl not found, skipping[/dim]")
+    except Exception as e:
+        console.print(f"    [red]curl error: {type(e).__name__}: {e}[/red]")
+
+    # --- Test 2: stdlib urllib ---
     console.print("\n  [dim]── urllib test (Python stdlib) ──[/dim]")
     url = "https://api.anthropic.com/v1/messages"
     payload = _json.dumps({
@@ -435,8 +507,11 @@ def config_test_key(
             text = data.get("content", [{}])[0].get("text", "")
             console.print(f"    Response: {text}")
     except urllib.error.HTTPError as e:
+        resp_body = e.read().decode()[:500]
+        resp_headers = dict(e.headers)
         console.print(f"    [red]✗ urllib: HTTP {e.code}[/red]")
-        console.print(f"    Body: {e.read().decode()[:500]}")
+        console.print(f"    Headers: {resp_headers}")
+        console.print(f"    Body: {resp_body}")
     except Exception as e:
         console.print(f"    [red]✗ urllib error: {type(e).__name__}: {e}[/red]")
 
