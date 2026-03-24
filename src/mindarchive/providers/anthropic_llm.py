@@ -58,7 +58,10 @@ class AnthropicLLM:
                 messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_prompt})
 
-        logger.info("Claude API call: model=%s, messages=%d", model, len(messages))
+        logger.info(
+            "Claude API call: model=%s, messages=%d, system_len=%d, user_len=%d",
+            model, len(messages), len(system_prompt), len(user_prompt),
+        )
 
         response = await self._client.messages.create(
             model=model,

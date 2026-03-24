@@ -124,6 +124,7 @@ class PipelineRunner:
         profile_dict = _profile_to_dict(profile)
         format_dict = _preset_to_dict(preset)
 
+        topic_provided = bool(topic and topic.strip())
         context = StepContext(
             project_slug=project_slug,
             topic=topic,
@@ -133,7 +134,7 @@ class PipelineRunner:
             output_dir=output_dir,
             model=model,
             extra_vars={
-                "topic_provided_directly": True,  # topic came from --topic
+                "topic_provided_directly": topic_provided,
             },
         )
 
