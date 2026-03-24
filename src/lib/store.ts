@@ -14,8 +14,18 @@ function getSupabase() {
     || process.env.SUPABASE_SERVICE_ROLE_KEY
     || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
     || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key);
+  if (!url || !key) {
+    console.log("[store] Supabase not configured — url:", !!url, "key:", !!key);
+    return null;
+  }
+  try {
+    return createClient(url, key, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  } catch (err) {
+    console.error("[store] Failed to create Supabase client:", err);
+    return null;
+  }
 }
 
 function useSupabase(): boolean {
