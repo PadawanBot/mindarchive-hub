@@ -14,24 +14,27 @@ import {
   XCircle,
   Clock,
   SkipForward,
+  AlertCircle,
 } from "lucide-react";
-import type { Project, StepResult } from "@/types";
+import type { Project } from "@/types";
+
+interface PipelineStepResult {
+  step: string;
+  status: "completed" | "failed" | "skipped";
+  output?: Record<string, unknown>;
+  error?: string;
+  cost_cents?: number;
+  duration_ms?: number;
+}
 
 const stepLabels: Record<string, string> = {
   topic_research: "Topic Research",
   script_writing: "Script Writing",
   hook_generation: "Hook Engineering",
-  voice_selection: "Voice Selection",
-  visual_direction: "Visual Direction",
-  stock_footage: "Stock Footage Curation",
-  brand_assets: "Brand Assets",
   script_refinement: "Script Refinement",
   voiceover_generation: "Voiceover Generation",
+  visual_direction: "Visual Direction",
   thumbnail_creation: "Thumbnail Creation",
-  retention_optimization: "Retention Optimization",
-  engagement_hooks: "Engagement Hooks",
-  seo_metadata: "SEO Metadata",
-  scheduling: "Scheduling",
   video_assembly: "Video Assembly",
 };
 
@@ -43,15 +46,28 @@ const statusIcon = {
   skipped: <SkipForward className="h-4 w-4 text-muted-foreground" />,
 };
 
+function getSteps(project: Project): PipelineStepResult[] {
+  const meta = project.metadata as Record<string, unknown> | undefined;
+  if (meta?.pipeline_steps && Array.isArray(meta.pipeline_steps)) {
+    return meta.pipeline_steps as PipelineStepResult[];
+  }
+  return [];
+}
+
 export default function ProjectDetailPage() {
   const params = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [running, setRunning] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   const loadProject = useCallback(async () => {
-    const res = await fetch(`/api/projects/${params.id}`);
-    const data = await res.json();
-    if (data.success) setProject(data.data);
+    try {
+      const res = await fetch(`/api/projects/${params.id}`);
+      const text = await res.text();
+      if (!text) return;
+      const data = JSON.parse(text);
+      if (data.success) setProject(data.data);
+    } catch {}
   }, [params.id]);
 
   useEffect(() => {
@@ -60,30 +76,28 @@ export default function ProjectDetailPage() {
 
   const runPipeline = async () => {
     setRunning(true);
+    setPipelineError(null);
     try {
       const res = await fetch(`/api/pipeline/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: params.id }),
       });
-      const data = await res.json();
-      if (data.success) {
-        // Poll for updates
-        const interval = setInterval(async () => {
-          await loadProject();
-          const r = await fetch(`/api/projects/${params.id}`);
-          const d = await r.json();
-          if (
-            d.data?.status === "completed" ||
-            d.data?.status === "failed"
-          ) {
-            clearInterval(interval);
-            setRunning(false);
-            setProject(d.data);
-          }
-        }, 3000);
+      const text = await res.text();
+      if (!text) {
+        setPipelineError(`Server returned empty response (status ${res.status})`);
+        setRunning(false);
+        return;
       }
-    } catch {
+      const data = JSON.parse(text);
+      if (!data.success) {
+        setPipelineError(data.error || "Pipeline failed");
+      }
+      // Reload project to get updated data
+      await loadProject();
+    } catch (err) {
+      setPipelineError(String(err));
+    } finally {
       setRunning(false);
     }
   };
@@ -95,6 +109,8 @@ export default function ProjectDetailPage() {
       </div>
     );
   }
+
+  const steps = getSteps(project);
 
   return (
     <div className="space-y-6">
@@ -121,7 +137,7 @@ export default function ProjectDetailPage() {
           </div>
           <p className="text-muted-foreground mt-1">{project.topic}</p>
         </div>
-        {project.status === "draft" && (
+        {(project.status === "draft" || project.status === "failed") && (
           <Button onClick={runPipeline} disabled={running}>
             {running ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -133,21 +149,31 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
+      {/* Error */}
+      {pipelineError && (
+        <Card className="border-red-500/50">
+          <CardContent className="flex items-start gap-3 text-red-400">
+            <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
+            <p className="text-sm">{pipelineError}</p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Pipeline Steps */}
       <Card>
         <CardTitle>Pipeline Progress</CardTitle>
         <CardContent className="mt-4">
           <div className="space-y-2">
-            {(project.steps || []).map((step: StepResult) => (
+            {steps.map((step) => (
               <div
                 key={step.step}
                 className="flex items-center gap-3 p-3 rounded-lg bg-muted"
               >
-                {statusIcon[step.status]}
+                {statusIcon[step.status] || statusIcon.pending}
                 <span className="text-sm font-medium flex-1">
                   {stepLabels[step.step] || step.step}
                 </span>
-                {step.duration_ms && (
+                {step.duration_ms && step.duration_ms > 0 && (
                   <span className="text-xs text-muted-foreground">
                     {(step.duration_ms / 1000).toFixed(1)}s
                   </span>
@@ -163,8 +189,6 @@ export default function ProjectDetailPage() {
                       ? "success"
                       : step.status === "failed"
                       ? "destructive"
-                      : step.status === "running"
-                      ? "default"
                       : "outline"
                   }
                   className="text-xs"
@@ -173,23 +197,44 @@ export default function ProjectDetailPage() {
                 </Badge>
               </div>
             ))}
-            {(!project.steps || project.steps.length === 0) && (
+            {steps.length === 0 && !running && (
               <p className="text-sm text-muted-foreground text-center py-4">
                 Pipeline not started yet. Click &quot;Run Pipeline&quot; to begin.
               </p>
+            )}
+            {steps.length === 0 && running && (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  Pipeline is running... this may take 30-60 seconds.
+                </p>
+              </div>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Script Preview (if available) */}
+      {/* Cost Summary */}
+      {project.total_cost_cents > 0 && (
+        <Card>
+          <CardTitle>Cost</CardTitle>
+          <CardContent className="mt-4">
+            <p className="text-2xl font-bold">${(project.total_cost_cents / 100).toFixed(3)}</p>
+            <p className="text-sm text-muted-foreground">Total API spend</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Script Preview */}
       {project.script_data && (
         <Card>
           <CardTitle>Script</CardTitle>
           <CardContent className="mt-4">
             <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-96 overflow-y-auto">
-              {typeof project.script_data === "string"
-                ? project.script_data
+              {typeof project.script_data === "object" && (project.script_data as Record<string, string>).refined
+                ? (project.script_data as Record<string, string>).refined
+                : typeof project.script_data === "object" && (project.script_data as Record<string, string>).raw
+                ? (project.script_data as Record<string, string>).raw
                 : JSON.stringify(project.script_data, null, 2)}
             </pre>
           </CardContent>
