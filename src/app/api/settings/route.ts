@@ -23,12 +23,23 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const errors: string[] = [];
   try {
     const body = await request.json();
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string" && !value.includes("****")) {
-        await setSetting(key, value);
+        try {
+          await setSetting(key, value);
+        } catch (err) {
+          errors.push(`${key}: ${String(err)}`);
+        }
       }
+    }
+    if (errors.length > 0) {
+      return NextResponse.json(
+        { success: false, error: errors.join("; ") },
+        { status: 500 }
+      );
     }
     return NextResponse.json({ success: true });
   } catch (error) {

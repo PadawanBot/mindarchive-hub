@@ -3,38 +3,38 @@
  * - Uses Supabase when NEXT_PUBLIC_SUPABASE_URL is configured (production/Vercel)
  * - Falls back to local JSON files when not configured (local dev)
  */
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// ─── Supabase client (server-side, no cookie dependency) ───
+// ─── Supabase client (cached, server-side) ───
 
-function getSupabase() {
+let _sb: SupabaseClient | null | undefined;
+
+function getSupabase(): SupabaseClient | null {
+  if (_sb !== undefined) return _sb;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  // Support both new Supabase key format and legacy key names
   const key = process.env.SUPABASE_SECRET_KEY
     || process.env.SUPABASE_SERVICE_ROLE_KEY
     || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
     || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     console.log("[store] Supabase not configured — url:", !!url, "key:", !!key);
+    _sb = null;
     return null;
   }
   try {
-    return createClient(url, key, {
+    _sb = createClient(url, key, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+    return _sb;
   } catch (err) {
     console.error("[store] Failed to create Supabase client:", err);
+    _sb = null;
     return null;
   }
 }
 
 function useSupabase(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-    || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    || process.env.SUPABASE_SECRET_KEY
-    || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return !!url && !!key;
+  return getSupabase() !== null;
 }
 
 // ─── Collection → Supabase table name mapping ───
@@ -80,8 +80,8 @@ async function getLocalStore() {
 // ─── Generic CRUD ───
 
 export async function getAll<T>(collection: string): Promise<T[]> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data, error } = await sb
       .from(tableName(collection))
       .select("*")
@@ -100,8 +100,8 @@ export async function getById<T extends { id: string }>(
   collection: string,
   id: string
 ): Promise<T | undefined> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data, error } = await sb
       .from(tableName(collection))
       .select("*")
@@ -119,8 +119,8 @@ export async function create<T extends { id: string }>(
   collection: string,
   item: Omit<T, "id" | "created_at" | "updated_at"> & Partial<T>
 ): Promise<T> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data, error } = await sb
       .from(tableName(collection))
       .insert(item)
@@ -148,8 +148,8 @@ export async function update<T extends { id: string }>(
   id: string,
   updates: Partial<T>
 ): Promise<T | undefined> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data, error } = await sb
       .from(tableName(collection))
       .update({ ...updates, updated_at: new Date().toISOString() })
@@ -176,8 +176,8 @@ export async function remove<T extends { id: string }>(
   collection: string,
   id: string
 ): Promise<boolean> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { error } = await sb
       .from(tableName(collection))
       .delete()
@@ -201,13 +201,13 @@ interface SettingRecord {
 }
 
 export async function getSetting(key: string): Promise<string | undefined> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data } = await sb
       .from("settings")
       .select("value")
       .eq("key", key)
-      .single();
+      .maybeSingle();
     return data?.value;
   }
   const store = await getLocalStore();
@@ -216,20 +216,15 @@ export async function getSetting(key: string): Promise<string | undefined> {
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
-    const { data: existing } = await sb
+  const sb = getSupabase();
+  if (sb) {
+    const { error } = await sb
       .from("settings")
-      .select("id")
-      .eq("key", key)
-      .maybeSingle();
-    if (existing) {
-      const { error } = await sb.from("settings").update({ value, updated_at: new Date().toISOString() }).eq("key", key);
-      if (error) throw new Error(`[store] setSetting update(${key}): ${error.message}`);
-    } else {
-      const { error } = await sb.from("settings").insert({ key, value });
-      if (error) throw new Error(`[store] setSetting insert(${key}): ${error.message}`);
-    }
+      .upsert(
+        { key, value, updated_at: new Date().toISOString() },
+        { onConflict: "key" }
+      );
+    if (error) throw new Error(`[store] setSetting(${key}): ${error.message}`);
     return;
   }
   const store = await getLocalStore();
@@ -244,8 +239,8 @@ export async function setSetting(key: string, value: string): Promise<void> {
 }
 
 export async function getAllSettings(): Promise<Record<string, string>> {
-  if (useSupabase()) {
-    const sb = getSupabase()!;
+  const sb = getSupabase();
+  if (sb) {
     const { data } = await sb.from("settings").select("key, value");
     return Object.fromEntries((data || []).map((s: { key: string; value: string }) => [s.key, s.value]));
   }
