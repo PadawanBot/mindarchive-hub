@@ -458,78 +458,100 @@ def config_test_key(
 
     console.print("\n  Testing...")
 
-    # --- Test 1: curl (if available) ---
-    console.print("\n  [dim]── curl test (subprocess) ──[/dim]")
-    curl_payload = _json.dumps({
+    import httpx
+    import anthropic as _anthropic
+    from anthropic import APIStatusError, Anthropic
+
+    console.print(f"    SDK ver:  {getattr(_anthropic, '__version__', 'unknown')}")
+    console.print(f"    httpx:    {httpx.__version__}")
+
+    api_url = "https://api.anthropic.com/v1/messages"
+    test_body = {
         "model": model, "max_tokens": 32,
         "messages": [{"role": "user", "content": "Say OK"}],
-    })
+    }
+    api_headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+    # --- Test 1: curl.exe with --ssl-no-revoke (known working) ---
+    console.print("\n  [dim]── Test 1: curl.exe (subprocess) ──[/dim]")
+    import tempfile
+    body_file = Path(tempfile.gettempdir()) / "mindarchive_test.json"
+    body_file.write_text(_json.dumps(test_body), encoding="utf-8")
     try:
         result = subprocess.run(
             [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "https://api.anthropic.com/v1/messages",
+                "curl.exe", "--ssl-no-revoke", "-s", "-w", "\n%{http_code}",
+                api_url,
                 "-H", f"x-api-key: {api_key}",
                 "-H", "anthropic-version: 2023-06-01",
                 "-H", "content-type: application/json",
-                "-d", curl_payload,
+                "-d", f"@{body_file}",
             ],
             capture_output=True, text=True, timeout=30,
         )
         lines = result.stdout.strip().rsplit("\n", 1)
         body_text = lines[0] if len(lines) > 1 else result.stdout
-        status_code = lines[-1] if len(lines) > 1 else "?"
-        console.print(f"    curl HTTP {status_code}: {body_text[:300]}")
+        status_code = lines[-1].strip() if len(lines) > 1 else "?"
+        console.print(f"    HTTP {status_code}: {body_text[:300]}")
         if status_code == "200":
-            console.print("    [green]✓ curl works![/green]")
+            console.print("    [green]✓ curl.exe works![/green]")
+        if result.stderr:
+            console.print(f"    stderr: {result.stderr[:200]}")
     except FileNotFoundError:
-        console.print("    [dim]curl not found, skipping[/dim]")
+        console.print("    [dim]curl.exe not found, skipping[/dim]")
     except Exception as e:
-        console.print(f"    [red]curl error: {type(e).__name__}: {e}[/red]")
+        console.print(f"    [red]error: {type(e).__name__}: {e}[/red]")
+    finally:
+        body_file.unlink(missing_ok=True)
 
-    # --- Test 2: stdlib urllib ---
-    console.print("\n  [dim]── urllib test (Python stdlib) ──[/dim]")
-    url = "https://api.anthropic.com/v1/messages"
-    payload = _json.dumps({
-        "model": model,
-        "max_tokens": 32,
-        "messages": [{"role": "user", "content": "Say OK"}],
-    }).encode()
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("x-api-key", api_key)
-    req.add_header("anthropic-version", "2023-06-01")
-    req.add_header("content-type", "application/json")
+    # --- Test 2: httpx with custom SSL ciphers ---
+    console.print("\n  [dim]── Test 2: httpx + custom SSL ciphers ──[/dim]")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read().decode()
-            console.print(f"    [green]✓ urllib: HTTP {resp.status}[/green]")
-            data = _json.loads(body)
-            text = data.get("content", [{}])[0].get("text", "")
-            console.print(f"    Response: {text}")
-    except urllib.error.HTTPError as e:
-        resp_body = e.read().decode()[:500]
-        resp_headers = dict(e.headers)
-        console.print(f"    [red]✗ urllib: HTTP {e.code}[/red]")
-        console.print(f"    Headers: {resp_headers}")
-        console.print(f"    Body: {resp_body}")
+        ctx = ssl.create_default_context()
+        # Chrome 120+ cipher suite order
+        ctx.set_ciphers(
+            "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:"
+            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+        )
+        with httpx.Client(http2=True, verify=ctx) as http:
+            resp = http.post(api_url, json=test_body, headers=api_headers, timeout=30.0)
+            console.print(f"    HTTP {resp.status_code}: {resp.text[:300]}")
+            if resp.status_code == 200:
+                console.print("    [green]✓ custom SSL works![/green]")
     except Exception as e:
-        console.print(f"    [red]✗ urllib error: {type(e).__name__}: {e}[/red]")
+        console.print(f"    [red]✗ {type(e).__name__}: {e}[/red]")
 
-    # --- Test 3: Anthropic SDK with HTTP/2 ---
-    console.print("\n  [dim]── SDK test (HTTP/2) ──[/dim]")
-
-    import anthropic as _anthropic
-    import httpx
-    console.print(f"    SDK ver: {getattr(_anthropic, '__version__', 'unknown')}")
-
-    from anthropic import APIStatusError, Anthropic
-
-    http2_client = httpx.Client(http2=True)
-    client = Anthropic(api_key=api_key, http_client=http2_client)
-    console.print(f"    Base URL: {client.base_url}")
-    console.print(f"    HTTP/2:   enabled")
-
+    # --- Test 3: httpx without SSL verification (diagnostic only) ---
+    console.print("\n  [dim]── Test 3: httpx + verify=False (diagnostic) ──[/dim]")
     try:
+        with httpx.Client(http2=True, verify=False) as http:
+            resp = http.post(api_url, json=test_body, headers=api_headers, timeout=30.0)
+            console.print(f"    HTTP {resp.status_code}: {resp.text[:300]}")
+            if resp.status_code == 200:
+                console.print("    [green]✓ verify=False works![/green]")
+    except Exception as e:
+        console.print(f"    [red]✗ {type(e).__name__}: {e}[/red]")
+
+    # --- Test 4: Anthropic SDK ---
+    console.print("\n  [dim]── Test 4: Anthropic SDK ──[/dim]")
+    # Try with custom SSL context + HTTP/2
+    try:
+        ctx2 = ssl.create_default_context()
+        ctx2.set_ciphers(
+            "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:"
+            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+        )
+        sdk_http = httpx.Client(http2=True, verify=ctx2)
+        client = Anthropic(api_key=api_key, http_client=sdk_http)
+
         response = client.messages.create(
             model=model,
             max_tokens=32,
@@ -545,21 +567,11 @@ def config_test_key(
         console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
     except APIStatusError as e:
         console.print(f"[red]  ✗ SDK error: HTTP {e.status_code}[/red]")
-        console.print(f"    Message:  {e.message}")
-        console.print(f"    Body:     {repr(e.body)}")
+        console.print(f"    Body: {repr(e.body)}")
         if e.response is not None:
-            console.print(f"    Headers:  {dict(e.response.headers)}")
-            try:
-                console.print(f"    Raw text: {e.response.text[:1000]}")
-            except Exception:
-                pass
-        # Hint about httpx issue
-        console.print("\n  [yellow]Hint: If urllib test passed but SDK failed, the issue is httpx.[/yellow]")
-        console.print("  [yellow]Try: pip install --upgrade httpx httpcore h11[/yellow]")
-        raise typer.Exit(1)
+            console.print(f"    Headers: {dict(e.response.headers)}")
     except Exception as e:
-        console.print(f"[red]  ✗ Connection error: {type(e).__name__}: {e}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]  ✗ {type(e).__name__}: {e}[/red]")
 
 
 # ═══════════════════════════════════════════════════════════
