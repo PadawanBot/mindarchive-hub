@@ -411,94 +411,77 @@ def config_test_key(
     console.print(f"  Model: {model}")
     console.print("  Testing...")
 
-    async def _test() -> None:
-        import httpx
-        from anthropic import APIStatusError, AsyncAnthropic
+    import json as _json
+    import urllib.request
+    import urllib.error
 
-        client = AsyncAnthropic(api_key=api_key)
-        console.print(f"    Base URL: {client.base_url}")
+    # --- Test 1: stdlib urllib (no httpx dependency) ---
+    console.print("\n  [dim]── urllib test (Python stdlib) ──[/dim]")
+    url = "https://api.anthropic.com/v1/messages"
+    payload = _json.dumps({
+        "model": model,
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "Say OK"}],
+    }).encode()
+    req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("x-api-key", api_key)
+    req.add_header("anthropic-version", "2023-06-01")
+    req.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode()
+            console.print(f"    [green]✓ urllib: HTTP {resp.status}[/green]")
+            data = _json.loads(body)
+            text = data.get("content", [{}])[0].get("text", "")
+            console.print(f"    Response: {text}")
+    except urllib.error.HTTPError as e:
+        console.print(f"    [red]✗ urllib: HTTP {e.code}[/red]")
+        console.print(f"    Body: {e.read().decode()[:500]}")
+    except Exception as e:
+        console.print(f"    [red]✗ urllib error: {type(e).__name__}: {e}[/red]")
 
-        # Detect SDK API version header
-        import anthropic
-        sdk_ver = getattr(anthropic, "__version__", "unknown")
-        api_ver = getattr(client, "_api_version", None) or "2023-06-01"
-        console.print(f"    SDK ver:  {sdk_ver}")
-        console.print(f"    API ver:  {api_ver}")
+    # --- Test 2: Anthropic SDK ---
+    console.print("\n  [dim]── SDK test ──[/dim]")
 
-        # --- Raw HTTP test first ---
-        console.print("\n  [dim]── Raw HTTP test ──[/dim]")
-        base = str(client.base_url).rstrip("/")
-        # Avoid doubling /v1 — SDK base_url already includes it
-        if base.endswith("/v1"):
-            raw_url = f"{base}/messages"
-        else:
-            raw_url = f"{base}/v1/messages"
-        console.print(f"    URL: {raw_url}")
+    import anthropic as _anthropic
+    console.print(f"    SDK ver: {getattr(_anthropic, '__version__', 'unknown')}")
 
-        # Try multiple API versions from newest to oldest
-        api_versions = ["2025-09-01", "2025-04-01", "2024-10-22", "2023-06-01"]
-        raw_payload = {
-            "model": model,
-            "max_tokens": 32,
-            "messages": [{"role": "user", "content": "Say OK"}],
-        }
-        try:
-            async with httpx.AsyncClient() as http:
-                for ver in api_versions:
-                    console.print(f"\n    [dim]Trying anthropic-version: {ver}[/dim]")
-                    raw_resp = await http.post(
-                        raw_url,
-                        json=raw_payload,
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": ver,
-                            "content-type": "application/json",
-                        },
-                        timeout=30.0,
-                    )
-                    console.print(f"    HTTP {raw_resp.status_code}: {raw_resp.text[:500]}")
-                    if raw_resp.status_code == 200:
-                        console.print(f"    [green]✓ Raw HTTP works with anthropic-version {ver}[/green]")
-                        break
-                    if raw_resp.status_code != 400:
-                        # Non-400 error (401 auth, 429 rate limit, etc.) — stop trying
-                        break
-        except Exception as raw_err:
-            console.print(f"    [red]Raw HTTP failed: {type(raw_err).__name__}: {raw_err}[/red]")
+    from anthropic import APIStatusError, Anthropic
 
-        # --- SDK test ---
-        console.print("\n  [dim]── SDK test ──[/dim]")
-        try:
-            response = await client.messages.create(
-                model=model,
-                max_tokens=32,
-                messages=[{"role": "user", "content": "Say 'OK' and nothing else."}],
-            )
-            text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    text += block.text
-            console.print(f"[green]  ✓ API key is working![/green]")
-            console.print(f"    Model:    {response.model}")
-            console.print(f"    Response: {text.strip()}")
-            console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
-        except APIStatusError as e:
-            console.print(f"[red]  ✗ SDK error: HTTP {e.status_code}[/red]")
-            console.print(f"    Message:  {e.message}")
-            console.print(f"    Body:     {repr(e.body)}")
-            if e.response is not None:
-                console.print(f"    Status:   {e.response.status_code}")
-                console.print(f"    Headers:  {dict(e.response.headers)}")
-                try:
-                    console.print(f"    Raw text: {e.response.text[:1000]}")
-                except Exception:
-                    pass
-            raise typer.Exit(1)
-        except Exception as e:
-            console.print(f"[red]  ✗ Connection error: {type(e).__name__}: {e}[/red]")
-            raise typer.Exit(1)
+    client = Anthropic(api_key=api_key)
+    console.print(f"    Base URL: {client.base_url}")
 
-    asyncio.run(_test())
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=32,
+            messages=[{"role": "user", "content": "Say 'OK' and nothing else."}],
+        )
+        text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                text += block.text
+        console.print(f"[green]  ✓ API key is working![/green]")
+        console.print(f"    Model:    {response.model}")
+        console.print(f"    Response: {text.strip()}")
+        console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
+    except APIStatusError as e:
+        console.print(f"[red]  ✗ SDK error: HTTP {e.status_code}[/red]")
+        console.print(f"    Message:  {e.message}")
+        console.print(f"    Body:     {repr(e.body)}")
+        if e.response is not None:
+            console.print(f"    Headers:  {dict(e.response.headers)}")
+            try:
+                console.print(f"    Raw text: {e.response.text[:1000]}")
+            except Exception:
+                pass
+        # Hint about httpx issue
+        console.print("\n  [yellow]Hint: If urllib test passed but SDK failed, the issue is httpx.[/yellow]")
+        console.print("  [yellow]Try: pip install --upgrade httpx httpcore h11[/yellow]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]  ✗ Connection error: {type(e).__name__}: {e}[/red]")
+        raise typer.Exit(1)
 
 
 # ═══════════════════════════════════════════════════════════
