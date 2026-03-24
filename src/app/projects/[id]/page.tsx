@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
@@ -15,91 +15,128 @@ import {
   Clock,
   SkipForward,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
-import type { Project } from "@/types";
+import type { Project, StepResult, StepStatus } from "@/types";
 
-interface PipelineStepResult {
-  step: string;
-  status: "completed" | "failed" | "skipped";
-  output?: Record<string, unknown>;
-  error?: string;
-  cost_cents?: number;
-  duration_ms?: number;
+// Must match src/lib/pipeline/steps.ts
+const STEPS = [
+  { id: "topic_research", label: "Topic Research", phase: "pre_production", order: 1 },
+  { id: "script_writing", label: "Script Writing", phase: "pre_production", order: 2 },
+  { id: "hook_engineering", label: "Hook Engineering", phase: "pre_production", order: 3 },
+  { id: "voice_selection", label: "Voice Selection", phase: "pre_production", order: 4 },
+  { id: "visual_direction", label: "Visual Direction", phase: "pre_production", order: 5 },
+  { id: "blend_curator", label: "Blend Curator", phase: "pre_production", order: 6 },
+  { id: "brand_assets", label: "Brand Assets", phase: "pre_production", order: 7 },
+  { id: "script_refinement", label: "Script Refinement", phase: "pre_production", order: 8 },
+  { id: "timing_sync", label: "Timing Sync", phase: "pre_production", order: 9 },
+  { id: "thumbnail_creation", label: "Thumbnail Creation", phase: "pre_production", order: 10 },
+  { id: "retention_structure", label: "Retention Structure", phase: "pre_production", order: 11 },
+  { id: "comment_magnet", label: "Comment Magnet", phase: "pre_production", order: 12 },
+  { id: "upload_blueprint", label: "Upload Blueprint", phase: "pre_production", order: 13 },
+  { id: "voiceover_generation", label: "Voiceover Generation", phase: "production", order: 14 },
+  { id: "image_generation", label: "Image Generation", phase: "production", order: 15 },
+  { id: "stock_footage", label: "Stock Footage", phase: "production", order: 16 },
+  { id: "motion_graphics", label: "Motion Graphics", phase: "production", order: 17 },
+  { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 18 },
+];
+
+const PRE_PROD_STEPS = STEPS.filter(s => s.phase === "pre_production");
+const PROD_STEPS = STEPS.filter(s => s.phase === "production");
+
+function statusIcon(status: StepStatus | "pending") {
+  switch (status) {
+    case "completed": return <CheckCircle className="h-4 w-4 text-green-500" />;
+    case "failed": return <XCircle className="h-4 w-4 text-red-500" />;
+    case "running": return <Loader2 className="h-4 w-4 text-primary animate-spin" />;
+    case "skipped": return <SkipForward className="h-4 w-4 text-muted-foreground" />;
+    default: return <Clock className="h-4 w-4 text-muted-foreground" />;
+  }
 }
 
-const stepLabels: Record<string, string> = {
-  topic_research: "Topic Research",
-  script_writing: "Script Writing",
-  hook_generation: "Hook Engineering",
-  script_refinement: "Script Refinement",
-  voiceover_generation: "Voiceover Generation",
-  visual_direction: "Visual Direction",
-  thumbnail_creation: "Thumbnail Creation",
-  video_assembly: "Video Assembly",
-};
-
-const statusIcon = {
-  pending: <Clock className="h-4 w-4 text-muted-foreground" />,
-  running: <Loader2 className="h-4 w-4 text-primary animate-spin" />,
-  completed: <CheckCircle className="h-4 w-4 text-success" />,
-  failed: <XCircle className="h-4 w-4 text-destructive" />,
-  skipped: <SkipForward className="h-4 w-4 text-muted-foreground" />,
-};
-
-function getSteps(project: Project): PipelineStepResult[] {
-  const meta = project.metadata as Record<string, unknown> | undefined;
-  if (meta?.pipeline_steps && Array.isArray(meta.pipeline_steps)) {
-    return meta.pipeline_steps as PipelineStepResult[];
+function statusVariant(status: string): "success" | "destructive" | "default" | "outline" {
+  switch (status) {
+    case "completed": return "success";
+    case "failed": return "destructive";
+    case "running": return "default";
+    default: return "outline";
   }
-  return [];
 }
 
 export default function ProjectDetailPage() {
   const params = useParams();
   const [project, setProject] = useState<Project | null>(null);
+  const [steps, setSteps] = useState<StepResult[]>([]);
   const [running, setRunning] = useState(false);
-  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef(false);
 
   const loadProject = useCallback(async () => {
     try {
       const res = await fetch(`/api/projects/${params.id}`);
       const text = await res.text();
-      if (!text) return;
-      const data = JSON.parse(text);
-      if (data.success) setProject(data.data);
+      if (text) { const d = JSON.parse(text); if (d.success) setProject(d.data); }
+    } catch {}
+  }, [params.id]);
+
+  const loadSteps = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
+      const text = await res.text();
+      if (text) { const d = JSON.parse(text); if (d.success) setSteps(d.data); }
     } catch {}
   }, [params.id]);
 
   useEffect(() => {
     loadProject();
-  }, [loadProject]);
+    loadSteps();
+  }, [loadProject, loadSteps]);
 
-  const runPipeline = async () => {
-    setRunning(true);
-    setPipelineError(null);
+  const runStep = async (stepId: string): Promise<boolean> => {
+    setCurrentStep(stepId);
+    setError(null);
     try {
-      const res = await fetch(`/api/pipeline/run`, {
+      const res = await fetch("/api/pipeline/step", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: params.id }),
+        body: JSON.stringify({ project_id: params.id, step: stepId }),
       });
       const text = await res.text();
-      if (!text) {
-        setPipelineError(`Server returned empty response (status ${res.status})`);
-        setRunning(false);
-        return;
-      }
+      if (!text) { setError(`Empty response for step ${stepId} (status ${res.status})`); return false; }
       const data = JSON.parse(text);
-      if (!data.success) {
-        setPipelineError(data.error || "Pipeline failed");
-      }
-      // Reload project to get updated data
-      await loadProject();
+      if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
+      await loadSteps();
+      return true;
     } catch (err) {
-      setPipelineError(String(err));
-    } finally {
-      setRunning(false);
+      setError(String(err));
+      return false;
     }
+  };
+
+  const runAllSteps = async () => {
+    setRunning(true);
+    setError(null);
+    abortRef.current = false;
+
+    for (const step of STEPS) {
+      if (abortRef.current) break;
+
+      // Skip already completed/skipped steps
+      const existing = steps.find(s => s.step === step.id);
+      if (existing?.status === "completed" || existing?.status === "skipped") continue;
+
+      const ok = await runStep(step.id);
+      if (!ok) break;
+    }
+
+    setCurrentStep(null);
+    setRunning(false);
+    await loadProject();
+  };
+
+  const stopPipeline = () => {
+    abortRef.current = true;
   };
 
   if (!project) {
@@ -110,120 +147,130 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const steps = getSteps(project);
+  const completedCount = steps.filter(s => s.status === "completed" || s.status === "skipped").length;
+  const totalCost = steps.reduce((sum, s) => sum + (s.cost_cents || 0), 0);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center gap-4">
         <Link href="/projects">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+          <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{project.title}</h1>
-            <Badge
-              variant={
-                project.status === "completed"
-                  ? "success"
-                  : project.status === "failed"
-                  ? "destructive"
-                  : "default"
-              }
-            >
-              {project.status}
-            </Badge>
+            <Badge variant={statusVariant(project.status)}>{project.status}</Badge>
           </div>
           <p className="text-muted-foreground mt-1">{project.topic}</p>
         </div>
-        {(project.status === "draft" || project.status === "failed") && (
-          <Button onClick={runPipeline} disabled={running}>
-            {running ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
+        <div className="flex gap-2">
+          {running ? (
+            <Button variant="outline" onClick={stopPipeline}>
+              <XCircle className="h-4 w-4 mr-2" /> Stop
+            </Button>
+          ) : (
+            <Button onClick={runAllSteps} disabled={project.status === "completed"}>
               <Play className="h-4 w-4 mr-2" />
-            )}
-            {running ? "Running..." : "Run Pipeline"}
-          </Button>
+              {completedCount > 0 ? "Resume Pipeline" : "Run Pipeline"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 bg-muted rounded-full h-2">
+          <div
+            className="bg-primary h-2 rounded-full transition-all duration-300"
+            style={{ width: `${(completedCount / STEPS.length) * 100}%` }}
+          />
+        </div>
+        <span className="text-sm text-muted-foreground">{completedCount}/{STEPS.length}</span>
+        {totalCost > 0 && (
+          <span className="text-sm text-muted-foreground">${(totalCost / 100).toFixed(3)}</span>
         )}
       </div>
 
       {/* Error */}
-      {pipelineError && (
+      {error && (
         <Card className="border-red-500/50">
           <CardContent className="flex items-start gap-3 text-red-400">
             <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
-            <p className="text-sm">{pipelineError}</p>
+            <p className="text-sm">{error}</p>
           </CardContent>
         </Card>
       )}
 
-      {/* Pipeline Steps */}
+      {/* Pre-Production Steps */}
       <Card>
-        <CardTitle>Pipeline Progress</CardTitle>
-        <CardContent className="mt-4">
-          <div className="space-y-2">
-            {steps.map((step) => (
-              <div
-                key={step.step}
-                className="flex items-center gap-3 p-3 rounded-lg bg-muted"
-              >
-                {statusIcon[step.status] || statusIcon.pending}
+        <CardTitle className="flex items-center gap-2">
+          Pre-Production
+          <Badge variant="outline" className="text-xs">{PRE_PROD_STEPS.length} steps</Badge>
+        </CardTitle>
+        <CardContent className="mt-4 space-y-2">
+          {PRE_PROD_STEPS.map((def) => {
+            const stepData = steps.find(s => s.step === def.id);
+            const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            return (
+              <div key={def.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+                {statusIcon(status)}
                 <span className="text-sm font-medium flex-1">
-                  {stepLabels[step.step] || step.step}
+                  <span className="text-muted-foreground mr-2">{def.order}.</span>
+                  {def.label}
                 </span>
-                {step.duration_ms && step.duration_ms > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {(step.duration_ms / 1000).toFixed(1)}s
-                  </span>
+                {stepData?.duration_ms && stepData.duration_ms > 0 && (
+                  <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
                 )}
-                {step.cost_cents && step.cost_cents > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    ${(step.cost_cents / 100).toFixed(3)}
-                  </span>
+                {stepData?.cost_cents && stepData.cost_cents > 0 && (
+                  <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
                 )}
-                <Badge
-                  variant={
-                    step.status === "completed"
-                      ? "success"
-                      : step.status === "failed"
-                      ? "destructive"
-                      : "outline"
-                  }
-                  className="text-xs"
-                >
-                  {step.status}
-                </Badge>
+                {status === "failed" && !running && (
+                  <Button variant="ghost" size="sm" onClick={() => runStep(def.id)}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                  </Button>
+                )}
+                <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
               </div>
-            ))}
-            {steps.length === 0 && !running && (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                Pipeline not started yet. Click &quot;Run Pipeline&quot; to begin.
-              </p>
-            )}
-            {steps.length === 0 && running && (
-              <div className="flex items-center justify-center gap-2 py-4">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">
-                  Pipeline is running... this may take 30-60 seconds.
-                </p>
-              </div>
-            )}
-          </div>
+            );
+          })}
         </CardContent>
       </Card>
 
-      {/* Cost Summary */}
-      {project.total_cost_cents > 0 && (
-        <Card>
-          <CardTitle>Cost</CardTitle>
-          <CardContent className="mt-4">
-            <p className="text-2xl font-bold">${(project.total_cost_cents / 100).toFixed(3)}</p>
-            <p className="text-sm text-muted-foreground">Total API spend</p>
-          </CardContent>
-        </Card>
-      )}
+      {/* Production Steps */}
+      <Card>
+        <CardTitle className="flex items-center gap-2">
+          Production
+          <Badge variant="outline" className="text-xs">{PROD_STEPS.length} steps</Badge>
+        </CardTitle>
+        <CardContent className="mt-4 space-y-2">
+          {PROD_STEPS.map((def) => {
+            const stepData = steps.find(s => s.step === def.id);
+            const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            return (
+              <div key={def.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+                {statusIcon(status)}
+                <span className="text-sm font-medium flex-1">
+                  <span className="text-muted-foreground mr-2">{def.order}.</span>
+                  {def.label}
+                </span>
+                {stepData?.duration_ms && stepData.duration_ms > 0 && (
+                  <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+                )}
+                {stepData?.cost_cents && stepData.cost_cents > 0 && (
+                  <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
+                )}
+                {status === "failed" && !running && (
+                  <Button variant="ghost" size="sm" onClick={() => runStep(def.id)}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                  </Button>
+                )}
+                <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
 
       {/* Script Preview */}
       {project.script_data && (
@@ -237,23 +284,6 @@ export default function ProjectDetailPage() {
                 ? (project.script_data as Record<string, string>).raw
                 : JSON.stringify(project.script_data, null, 2)}
             </pre>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Output */}
-      {project.output_url && (
-        <Card>
-          <CardTitle>Output</CardTitle>
-          <CardContent className="mt-4">
-            <a
-              href={project.output_url}
-              className="text-primary underline text-sm"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Download Final Video
-            </a>
           </CardContent>
         </Card>
       )}

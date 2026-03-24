@@ -19,6 +19,7 @@ import {
   Mic,
   Image,
   Film,
+  Clock,
 } from "lucide-react";
 import Link from "next/link";
 import type { ChannelProfile, FormatPreset, TopicSuggestion } from "@/types";
@@ -28,12 +29,22 @@ type WizardStep = "setup" | "research" | "plan" | "confirm";
 const PIPELINE_STEPS = [
   { id: "topic_research", label: "Topic Research", icon: Search, phase: "pre" },
   { id: "script_writing", label: "Script Writing", icon: FileText, phase: "pre" },
-  { id: "hook_generation", label: "Hook Engineering", icon: Sparkles, phase: "pre" },
+  { id: "hook_engineering", label: "Hook Engineering", icon: Sparkles, phase: "pre" },
+  { id: "voice_selection", label: "Voice Selection", icon: Mic, phase: "pre" },
+  { id: "visual_direction", label: "Visual Direction", icon: Image, phase: "pre" },
+  { id: "blend_curator", label: "Blend Curator", icon: Film, phase: "pre" },
+  { id: "brand_assets", label: "Brand Assets", icon: Image, phase: "pre" },
   { id: "script_refinement", label: "Script Refinement", icon: FileText, phase: "pre" },
-  { id: "voiceover_generation", label: "Voiceover", icon: Mic, phase: "production" },
-  { id: "visual_direction", label: "Visual Direction", icon: Image, phase: "production" },
-  { id: "thumbnail_creation", label: "Thumbnail", icon: Image, phase: "production" },
-  { id: "video_assembly", label: "Video Assembly", icon: Film, phase: "production" },
+  { id: "timing_sync", label: "Timing Sync", icon: Clock, phase: "pre" },
+  { id: "thumbnail_creation", label: "Thumbnail Creation", icon: Image, phase: "pre" },
+  { id: "retention_structure", label: "Retention Structure", icon: Sparkles, phase: "pre" },
+  { id: "comment_magnet", label: "Comment Magnet", icon: Sparkles, phase: "pre" },
+  { id: "upload_blueprint", label: "Upload Blueprint", icon: FileText, phase: "pre" },
+  { id: "voiceover_generation", label: "Voiceover Generation", icon: Mic, phase: "production" },
+  { id: "image_generation", label: "Image Generation", icon: Image, phase: "production" },
+  { id: "stock_footage", label: "Stock Footage", icon: Film, phase: "production" },
+  { id: "motion_graphics", label: "Motion Graphics", icon: Film, phase: "production" },
+  { id: "hero_scenes", label: "Hero Scenes", icon: Film, phase: "production" },
 ];
 
 export default function NewProductionPage() {
