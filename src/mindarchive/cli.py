@@ -515,16 +515,19 @@ def config_test_key(
     except Exception as e:
         console.print(f"    [red]✗ urllib error: {type(e).__name__}: {e}[/red]")
 
-    # --- Test 2: Anthropic SDK ---
-    console.print("\n  [dim]── SDK test ──[/dim]")
+    # --- Test 3: Anthropic SDK with HTTP/2 ---
+    console.print("\n  [dim]── SDK test (HTTP/2) ──[/dim]")
 
     import anthropic as _anthropic
+    import httpx
     console.print(f"    SDK ver: {getattr(_anthropic, '__version__', 'unknown')}")
 
     from anthropic import APIStatusError, Anthropic
 
-    client = Anthropic(api_key=api_key)
+    http2_client = httpx.Client(http2=True)
+    client = Anthropic(api_key=api_key, http_client=http2_client)
     console.print(f"    Base URL: {client.base_url}")
+    console.print(f"    HTTP/2:   enabled")
 
     try:
         response = client.messages.create(

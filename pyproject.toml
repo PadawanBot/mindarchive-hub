@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mindarchive"
-version = "1.3.1"
+version = "1.3.2"
 description = "MindArchive Production Hub — automated faceless YouTube video production"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -30,7 +30,7 @@ dependencies = [
     "anthropic>=0.45.0",
     "openai>=1.14.0",
     "elevenlabs>=1.2.0",
-    "httpx>=0.27.0",
+    "httpx[http2]>=0.27.0",
 
     # Media Processing
     "Pillow>=10.2.0",

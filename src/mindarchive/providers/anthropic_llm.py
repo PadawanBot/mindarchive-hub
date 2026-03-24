@@ -30,7 +30,11 @@ class AnthropicLLM:
         default_model: str = "claude-sonnet-4-6",
         rate_limiter: RateLimiter | None = None,
     ) -> None:
-        self._client = AsyncAnthropic(api_key=api_key)
+        import httpx
+
+        # Use HTTP/2 to avoid Cloudflare TLS fingerprint blocking
+        http_client = httpx.AsyncClient(http2=True)
+        self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
         self._default_model = default_model
         self._rate_limiter = rate_limiter
 
