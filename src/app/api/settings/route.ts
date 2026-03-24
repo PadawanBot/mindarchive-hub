@@ -23,13 +23,24 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const errors: string[] = [];
   try {
-    const body = await request.json();
+    const text = await request.text();
+    if (!text) {
+      return NextResponse.json({ success: false, error: "Empty request body" }, { status: 400 });
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 });
+    }
+    const errors: string[] = [];
+    const saved: string[] = [];
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string" && !value.includes("****")) {
         try {
           await setSetting(key, value);
+          saved.push(key);
         } catch (err) {
           errors.push(`${key}: ${String(err)}`);
         }
@@ -37,14 +48,14 @@ export async function PUT(request: Request) {
     }
     if (errors.length > 0) {
       return NextResponse.json(
-        { success: false, error: errors.join("; ") },
+        { success: false, error: errors.join("; "), saved },
         { status: 500 }
       );
     }
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, saved });
   } catch (error) {
     return NextResponse.json(
-      { success: false, error: String(error) },
+      { success: false, error: `Unhandled: ${String(error)}` },
       { status: 500 }
     );
   }

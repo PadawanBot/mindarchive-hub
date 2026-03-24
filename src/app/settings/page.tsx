@@ -47,7 +47,12 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
       });
-      const data = await res.json();
+      const text = await res.text();
+      if (!text) {
+        setSaveError(`Server returned empty response (status ${res.status})`);
+        return;
+      }
+      const data = JSON.parse(text);
       if (data.success) {
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
