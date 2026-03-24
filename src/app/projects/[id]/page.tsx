@@ -1,0 +1,217 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import { Card, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  ArrowLeft,
+  Play,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  Clock,
+  SkipForward,
+} from "lucide-react";
+import type { Project, StepResult } from "@/types";
+
+const stepLabels: Record<string, string> = {
+  topic_research: "Topic Research",
+  script_writing: "Script Writing",
+  hook_generation: "Hook Engineering",
+  voice_selection: "Voice Selection",
+  visual_direction: "Visual Direction",
+  stock_footage: "Stock Footage Curation",
+  brand_assets: "Brand Assets",
+  script_refinement: "Script Refinement",
+  voiceover_generation: "Voiceover Generation",
+  thumbnail_creation: "Thumbnail Creation",
+  retention_optimization: "Retention Optimization",
+  engagement_hooks: "Engagement Hooks",
+  seo_metadata: "SEO Metadata",
+  scheduling: "Scheduling",
+  video_assembly: "Video Assembly",
+};
+
+const statusIcon = {
+  pending: <Clock className="h-4 w-4 text-muted-foreground" />,
+  running: <Loader2 className="h-4 w-4 text-primary animate-spin" />,
+  completed: <CheckCircle className="h-4 w-4 text-success" />,
+  failed: <XCircle className="h-4 w-4 text-destructive" />,
+  skipped: <SkipForward className="h-4 w-4 text-muted-foreground" />,
+};
+
+export default function ProjectDetailPage() {
+  const params = useParams();
+  const [project, setProject] = useState<Project | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const loadProject = useCallback(async () => {
+    const res = await fetch(`/api/projects/${params.id}`);
+    const data = await res.json();
+    if (data.success) setProject(data.data);
+  }, [params.id]);
+
+  useEffect(() => {
+    loadProject();
+  }, [loadProject]);
+
+  const runPipeline = async () => {
+    setRunning(true);
+    try {
+      const res = await fetch(`/api/pipeline/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: params.id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Poll for updates
+        const interval = setInterval(async () => {
+          await loadProject();
+          const r = await fetch(`/api/projects/${params.id}`);
+          const d = await r.json();
+          if (
+            d.data?.status === "completed" ||
+            d.data?.status === "failed"
+          ) {
+            clearInterval(interval);
+            setRunning(false);
+            setProject(d.data);
+          }
+        }, 3000);
+      }
+    } catch {
+      setRunning(false);
+    }
+  };
+
+  if (!project) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <Link href="/projects">
+          <Button variant="ghost" size="icon">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        </Link>
+        <div className="flex-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">{project.title}</h1>
+            <Badge
+              variant={
+                project.status === "completed"
+                  ? "success"
+                  : project.status === "failed"
+                  ? "destructive"
+                  : "default"
+              }
+            >
+              {project.status}
+            </Badge>
+          </div>
+          <p className="text-muted-foreground mt-1">{project.topic}</p>
+        </div>
+        {project.status === "draft" && (
+          <Button onClick={runPipeline} disabled={running}>
+            {running ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4 mr-2" />
+            )}
+            {running ? "Running..." : "Run Pipeline"}
+          </Button>
+        )}
+      </div>
+
+      {/* Pipeline Steps */}
+      <Card>
+        <CardTitle>Pipeline Progress</CardTitle>
+        <CardContent className="mt-4">
+          <div className="space-y-2">
+            {(project.steps || []).map((step: StepResult) => (
+              <div
+                key={step.step}
+                className="flex items-center gap-3 p-3 rounded-lg bg-muted"
+              >
+                {statusIcon[step.status]}
+                <span className="text-sm font-medium flex-1">
+                  {stepLabels[step.step] || step.step}
+                </span>
+                {step.duration_ms && (
+                  <span className="text-xs text-muted-foreground">
+                    {(step.duration_ms / 1000).toFixed(1)}s
+                  </span>
+                )}
+                {step.cost_cents && step.cost_cents > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    ${(step.cost_cents / 100).toFixed(3)}
+                  </span>
+                )}
+                <Badge
+                  variant={
+                    step.status === "completed"
+                      ? "success"
+                      : step.status === "failed"
+                      ? "destructive"
+                      : step.status === "running"
+                      ? "default"
+                      : "outline"
+                  }
+                  className="text-xs"
+                >
+                  {step.status}
+                </Badge>
+              </div>
+            ))}
+            {(!project.steps || project.steps.length === 0) && (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                Pipeline not started yet. Click &quot;Run Pipeline&quot; to begin.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Script Preview (if available) */}
+      {project.script_data && (
+        <Card>
+          <CardTitle>Script</CardTitle>
+          <CardContent className="mt-4">
+            <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-96 overflow-y-auto">
+              {typeof project.script_data === "string"
+                ? project.script_data
+                : JSON.stringify(project.script_data, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Output */}
+      {project.output_url && (
+        <Card>
+          <CardTitle>Output</CardTitle>
+          <CardContent className="mt-4">
+            <a
+              href={project.output_url}
+              className="text-primary underline text-sm"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Download Final Video
+            </a>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

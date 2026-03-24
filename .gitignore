@@ -1,16 +1,24 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-*.egg
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-# Virtual environments
-.venv/
-venv/
-env/
+# Next.js
+.next/
+out/
+
+# Production
+build/
+dist/
+
+# Environment & credentials
+.env
+.env.local
+.env.production
+.env*.local
+
+# MindArchive local data
+.mindarchive/
 
 # IDE
 .vscode/
@@ -18,22 +26,16 @@ env/
 *.swp
 *.swo
 
-# Environment & credentials
-.env
-*.enc
-.fernet.key
-credentials.enc
-token.json
-
-# MindArchive app data
-.mindarchive/
-
 # OS
 .DS_Store
 Thumbs.db
 
-# Test / coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
+# Debug
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel
