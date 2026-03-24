@@ -421,7 +421,12 @@ def config_test_key(
 
         # --- Raw HTTP test first ---
         console.print("\n  [dim]── Raw HTTP test ──[/dim]")
-        raw_url = f"{str(client.base_url).rstrip('/')}/v1/messages"
+        base = str(client.base_url).rstrip("/")
+        # Avoid doubling /v1 — SDK base_url already includes it
+        if base.endswith("/v1"):
+            raw_url = f"{base}/messages"
+        else:
+            raw_url = f"{base}/v1/messages"
         console.print(f"    URL: {raw_url}")
         try:
             raw_payload = {
@@ -440,26 +445,26 @@ def config_test_key(
                     },
                     timeout=30.0,
                 )
-            console.print(f"    HTTP status: {raw_resp.status_code}")
-            console.print(f"    Headers:     {dict(raw_resp.headers)}")
-            console.print(f"    Body:        {raw_resp.text[:1000]}")
+                console.print(f"    HTTP status: {raw_resp.status_code}")
+                console.print(f"    Headers:     {dict(raw_resp.headers)}")
+                console.print(f"    Body:        {raw_resp.text[:1000]}")
 
-            # If 400, try with newer API version
-            if raw_resp.status_code == 400:
-                console.print("\n  [dim]── Retry with anthropic-version 2024-10-22 ──[/dim]")
-                raw_resp2 = await http.post(
-                    raw_url,
-                    json=raw_payload,
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2024-10-22",
-                        "content-type": "application/json",
-                    },
-                    timeout=30.0,
-                )
-                console.print(f"    HTTP status: {raw_resp2.status_code}")
-                console.print(f"    Headers:     {dict(raw_resp2.headers)}")
-                console.print(f"    Body:        {raw_resp2.text[:1000]}")
+                # If 400, try with newer API version
+                if raw_resp.status_code == 400:
+                    console.print("\n  [dim]── Retry with anthropic-version 2024-10-22 ──[/dim]")
+                    raw_resp2 = await http.post(
+                        raw_url,
+                        json=raw_payload,
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2024-10-22",
+                            "content-type": "application/json",
+                        },
+                        timeout=30.0,
+                    )
+                    console.print(f"    HTTP status: {raw_resp2.status_code}")
+                    console.print(f"    Headers:     {dict(raw_resp2.headers)}")
+                    console.print(f"    Body:        {raw_resp2.text[:1000]}")
         except Exception as raw_err:
             console.print(f"    [red]Raw HTTP failed: {type(raw_err).__name__}: {raw_err}[/red]")
 
