@@ -303,16 +303,51 @@ def main(
 @config_app.command("set")
 def config_set(
     key: str = typer.Argument(..., help="Configuration key (e.g. ANTHROPIC_API_KEY)"),
-    value: str = typer.Argument(..., help="Value to set"),
+    value: str = typer.Argument(None, help="Value to set (omit to enter securely)"),
 ) -> None:
-    """Set a configuration value or API credential."""
+    """Set a configuration value or API credential.
+
+    If VALUE is omitted, you will be prompted to enter it securely (hidden input).
+    This is recommended for API keys to avoid exposing them in shell history.
+    """
+    import getpass
+
     from mindarchive.config.settings import CredentialStore, get_settings
+
+    if value is None:
+        value = getpass.getpass(f"Enter value for {key}: ")
+        if not value.strip():
+            console.print("[red]No value provided. Aborted.[/red]")
+            raise typer.Exit(1)
+
+    value = value.strip()
 
     settings = get_settings()
     settings.ensure_dirs()
     store = CredentialStore(settings.credentials_path)
     store.set(key, value)
     console.print(f"[green]Set {key} ({'*' * min(len(value), 8)}...)[/green]")
+
+
+@config_app.command("get")
+def config_get(
+    key: str = typer.Argument(..., help="Configuration key to retrieve"),
+    unmask: bool = typer.Option(False, "--unmask", help="Show the full value (use with caution)"),
+) -> None:
+    """Show a stored credential value (masked by default)."""
+    from mindarchive.config.settings import CredentialStore, get_settings
+
+    settings = get_settings()
+    store = CredentialStore(settings.credentials_path)
+    value = store.get(key)
+    if value is None:
+        console.print(f"[yellow]{key} is not set.[/yellow]")
+        raise typer.Exit(1)
+    if unmask:
+        console.print(f"  {key} = {value}")
+    else:
+        masked = value[:4] + "*" * (len(value) - 8) + value[-4:] if len(value) > 12 else "****"
+        console.print(f"  {key} = {masked}")
 
 
 @config_app.command("list")

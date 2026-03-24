@@ -76,7 +76,7 @@ class PipelineRunner:
 
         # Get API key
         cred_store = CredentialStore(self._settings.credentials_path)
-        api_key = cred_store.get("ANTHROPIC_API_KEY") or self._settings.anthropic_api_key
+        api_key = (cred_store.get("ANTHROPIC_API_KEY") or self._settings.anthropic_api_key or "").strip()
         if not api_key:
             console.print("[red]ANTHROPIC_API_KEY not configured. Run: mindarchive config set ANTHROPIC_API_KEY <key>[/red]")
             return {}
