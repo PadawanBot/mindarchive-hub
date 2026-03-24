@@ -417,7 +417,13 @@ def config_test_key(
 
         client = AsyncAnthropic(api_key=api_key)
         console.print(f"    Base URL: {client.base_url}")
-        console.print(f"    SDK ver:  {client._version if hasattr(client, '_version') else 'unknown'}")
+
+        # Detect SDK API version header
+        import anthropic
+        sdk_ver = getattr(anthropic, "__version__", "unknown")
+        api_ver = getattr(client, "_api_version", None) or "2023-06-01"
+        console.print(f"    SDK ver:  {sdk_ver}")
+        console.print(f"    API ver:  {api_ver}")
 
         # --- Raw HTTP test first ---
         console.print("\n  [dim]── Raw HTTP test ──[/dim]")
@@ -428,43 +434,35 @@ def config_test_key(
         else:
             raw_url = f"{base}/v1/messages"
         console.print(f"    URL: {raw_url}")
-        try:
-            raw_payload = {
-                "model": model,
-                "max_tokens": 32,
-                "messages": [{"role": "user", "content": "Say OK"}],
-            }
-            async with httpx.AsyncClient() as http:
-                raw_resp = await http.post(
-                    raw_url,
-                    json=raw_payload,
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    timeout=30.0,
-                )
-                console.print(f"    HTTP status: {raw_resp.status_code}")
-                console.print(f"    Headers:     {dict(raw_resp.headers)}")
-                console.print(f"    Body:        {raw_resp.text[:1000]}")
 
-                # If 400, try with newer API version
-                if raw_resp.status_code == 400:
-                    console.print("\n  [dim]── Retry with anthropic-version 2024-10-22 ──[/dim]")
-                    raw_resp2 = await http.post(
+        # Try multiple API versions from newest to oldest
+        api_versions = ["2025-09-01", "2025-04-01", "2024-10-22", "2023-06-01"]
+        raw_payload = {
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "Say OK"}],
+        }
+        try:
+            async with httpx.AsyncClient() as http:
+                for ver in api_versions:
+                    console.print(f"\n    [dim]Trying anthropic-version: {ver}[/dim]")
+                    raw_resp = await http.post(
                         raw_url,
                         json=raw_payload,
                         headers={
                             "x-api-key": api_key,
-                            "anthropic-version": "2024-10-22",
+                            "anthropic-version": ver,
                             "content-type": "application/json",
                         },
                         timeout=30.0,
                     )
-                    console.print(f"    HTTP status: {raw_resp2.status_code}")
-                    console.print(f"    Headers:     {dict(raw_resp2.headers)}")
-                    console.print(f"    Body:        {raw_resp2.text[:1000]}")
+                    console.print(f"    HTTP {raw_resp.status_code}: {raw_resp.text[:500]}")
+                    if raw_resp.status_code == 200:
+                        console.print(f"    [green]✓ Raw HTTP works with anthropic-version {ver}[/green]")
+                        break
+                    if raw_resp.status_code != 400:
+                        # Non-400 error (401 auth, 429 rate limit, etc.) — stop trying
+                        break
         except Exception as raw_err:
             console.print(f"    [red]Raw HTTP failed: {type(raw_err).__name__}: {raw_err}[/red]")
 
