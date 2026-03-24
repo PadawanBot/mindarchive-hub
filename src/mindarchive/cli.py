@@ -412,9 +412,40 @@ def config_test_key(
     console.print("  Testing...")
 
     async def _test() -> None:
+        import httpx
         from anthropic import APIStatusError, AsyncAnthropic
 
         client = AsyncAnthropic(api_key=api_key)
+        console.print(f"    Base URL: {client.base_url}")
+        console.print(f"    SDK ver:  {client._version if hasattr(client, '_version') else 'unknown'}")
+
+        # --- Raw HTTP test first ---
+        console.print("\n  [dim]── Raw HTTP test ──[/dim]")
+        try:
+            raw_payload = {
+                "model": model,
+                "max_tokens": 32,
+                "messages": [{"role": "user", "content": "Say OK"}],
+            }
+            async with httpx.AsyncClient() as http:
+                raw_resp = await http.post(
+                    f"{client.base_url}messages",
+                    json=raw_payload,
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    timeout=30.0,
+                )
+            console.print(f"    HTTP status: {raw_resp.status_code}")
+            console.print(f"    Headers:     {dict(raw_resp.headers)}")
+            console.print(f"    Body:        {raw_resp.text[:1000]}")
+        except Exception as raw_err:
+            console.print(f"    [red]Raw HTTP failed: {raw_err}[/red]")
+
+        # --- SDK test ---
+        console.print("\n  [dim]── SDK test ──[/dim]")
         try:
             response = await client.messages.create(
                 model=model,
@@ -430,18 +461,19 @@ def config_test_key(
             console.print(f"    Response: {text.strip()}")
             console.print(f"    Tokens:   {response.usage.input_tokens} in / {response.usage.output_tokens} out")
         except APIStatusError as e:
-            console.print(f"[red]  ✗ API error: HTTP {e.status_code}[/red]")
-            console.print(f"    Message: {e.message}")
-            if e.body:
-                console.print(f"    Body:    {e.body}")
+            console.print(f"[red]  ✗ SDK error: HTTP {e.status_code}[/red]")
+            console.print(f"    Message:  {e.message}")
+            console.print(f"    Body:     {repr(e.body)}")
             if e.response is not None:
+                console.print(f"    Status:   {e.response.status_code}")
+                console.print(f"    Headers:  {dict(e.response.headers)}")
                 try:
-                    console.print(f"    Response: {e.response.text}")
+                    console.print(f"    Raw text: {e.response.text[:1000]}")
                 except Exception:
                     pass
             raise typer.Exit(1)
         except Exception as e:
-            console.print(f"[red]  ✗ Connection error: {e}[/red]")
+            console.print(f"[red]  ✗ Connection error: {type(e).__name__}: {e}[/red]")
             raise typer.Exit(1)
 
     asyncio.run(_test())
