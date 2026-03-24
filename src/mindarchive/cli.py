@@ -38,7 +38,7 @@ app.add_typer(format_app, name="format")
 
 @app.command()
 def produce(
-    topic: str = typer.Option(..., "--topic", "-t", help="Video topic"),
+    topic: Optional[str] = typer.Option(None, "--topic", "-t", help="Video topic (omit to let Topic Miner generate one)"),
     profile: str = typer.Option("mindarchive", "--profile", "-p", help="Channel profile slug"),
     format: str = typer.Option("documentary", "--format", "-f", help="Format preset slug"),
     mode: str = typer.Option("phase_gate", "--mode", "-m", help="Run mode: auto, gate, phase_gate"),
@@ -58,14 +58,14 @@ def produce(
         raise typer.Exit(1)
 
     if dry_run:
-        _show_dry_run(topic, profile, preset.name, mode, model, settings)
+        _show_dry_run(topic or "(auto — Topic Miner will generate)", profile, preset.name, mode, model, settings)
         return
 
     from mindarchive.pipeline.runner import PipelineRunner
 
     runner = PipelineRunner(settings)
     results = runner.run_cli(
-        topic=topic,
+        topic=topic or "",
         profile_slug=profile,
         format_slug=format,
         mode=mode,
@@ -586,7 +586,10 @@ def _show_dry_run(
 
     # Skip map
     console.print(f"\n  Topic: {topic}")
-    console.print(f"  Step 1: [dim]SKIP[/dim] (topic provided via --topic)")
+    if topic.startswith("(auto"):
+        console.print(f"  Step 1: [green]RUN[/green] (no topic provided — Topic Miner will generate)")
+    else:
+        console.print(f"  Step 1: [dim]SKIP[/dim] (topic provided via --topic)")
     console.print(f"  Format: {format_name}")
     console.print(f"  Mode: {mode}")
     console.print(f"  Model: {model}")
