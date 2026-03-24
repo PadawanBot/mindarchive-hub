@@ -22,7 +22,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+export async function POST(request: Request) {
   try {
     const text = await request.text();
     if (!text) {

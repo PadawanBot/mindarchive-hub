@@ -43,7 +43,7 @@ export default function SettingsPage() {
     setSaveError(null);
     try {
       const res = await fetch("/api/settings", {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
       });
