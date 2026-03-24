@@ -394,9 +394,9 @@ def config_test_key(
     model: str = typer.Option("claude-sonnet-4-6", "--model", help="Model to test with"),
 ) -> None:
     """Test the Anthropic API key with a minimal API call."""
-    import asyncio
-
     from mindarchive.config.settings import CredentialStore, get_settings
+
+    console.print(f"  [dim]mindarchive v{__version__}[/dim]")
 
     settings = get_settings()
     store = CredentialStore(settings.credentials_path)
