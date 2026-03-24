@@ -7,7 +7,8 @@ export async function GET() {
   const hasPublishable = !!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   const hasAnon = !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  let dbStatus = "not configured";
+  let dbRead = "not configured";
+  let dbWrite = "not tested";
   if (url && (hasSecret || hasServiceRole || hasPublishable || hasAnon)) {
     try {
       const { createClient } = await import("@supabase/supabase-js");
@@ -18,10 +19,21 @@ export async function GET() {
       const sb = createClient(url, key!, {
         auth: { autoRefreshToken: false, persistSession: false },
       });
-      const { data, error } = await sb.from("settings").select("count").limit(1);
-      dbStatus = error ? `error: ${error.message}` : "connected";
+
+      // Test read
+      const { error: readErr } = await sb.from("settings").select("key").limit(1);
+      dbRead = readErr ? `error: ${readErr.message} (code: ${readErr.code})` : "ok";
+
+      // Test write (upsert)
+      const { error: writeErr } = await sb
+        .from("settings")
+        .upsert(
+          { key: "_health_check", value: new Date().toISOString(), updated_at: new Date().toISOString() },
+          { onConflict: "key" }
+        );
+      dbWrite = writeErr ? `error: ${writeErr.message} (code: ${writeErr.code})` : "ok";
     } catch (err) {
-      dbStatus = `crash: ${String(err)}`;
+      dbRead = `crash: ${String(err)}`;
     }
   }
 
@@ -33,7 +45,8 @@ export async function GET() {
       hasServiceRole,
       hasPublishable,
       hasAnon,
-      dbStatus,
+      dbRead,
+      dbWrite,
     },
   });
 }
