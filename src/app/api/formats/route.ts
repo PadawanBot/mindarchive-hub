@@ -1,8 +1,21 @@
 import { NextResponse } from "next/server";
+import { getAll } from "@/lib/store";
 import type { FormatPreset } from "@/types";
 
-// Built-in format presets (no DB needed)
-const BUILT_IN_FORMATS: FormatPreset[] = [
+export async function GET() {
+  try {
+    const formats = await getAll<FormatPreset>("format_presets");
+    if (formats.length > 0) {
+      return NextResponse.json({ success: true, data: formats });
+    }
+    // Fallback: hardcoded formats (local dev without Supabase)
+    return NextResponse.json({ success: true, data: FALLBACK_FORMATS });
+  } catch {
+    return NextResponse.json({ success: true, data: FALLBACK_FORMATS });
+  }
+}
+
+const FALLBACK_FORMATS: FormatPreset[] = [
   {
     id: "documentary",
     name: "Documentary",
@@ -76,7 +89,3 @@ const BUILT_IN_FORMATS: FormatPreset[] = [
     description: "Two-sided analysis. 8-12 minutes, balanced exploration of controversial topics.",
   },
 ];
-
-export async function GET() {
-  return NextResponse.json({ success: true, data: BUILT_IN_FORMATS });
-}
