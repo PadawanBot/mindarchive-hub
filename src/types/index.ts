@@ -77,7 +77,7 @@ export interface Project {
   profile_id: string;
   format_id: string;
   status: ProjectStatus;
-  steps: StepResult[];
+  steps?: StepResult[];
   total_cost_cents: number;
   output_url?: string;
   script_data?: Record<string, unknown> | null;

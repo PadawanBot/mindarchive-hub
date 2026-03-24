@@ -87,8 +87,11 @@ export default function NewProductionPage() {
     }
   };
 
+  const [startError, setStartError] = useState<string | null>(null);
+
   const handleStartProduction = async () => {
     setLoading(true);
+    setStartError(null);
     try {
       const topic = selectedTopic?.title || customTopic;
       const res = await fetch("/api/projects", {
@@ -103,10 +106,19 @@ export default function NewProductionPage() {
           additional_notes: additionalNotes,
         }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      if (!text) {
+        setStartError(`Server returned empty response (status ${res.status})`);
+        return;
+      }
+      const data = JSON.parse(text);
       if (data.success) {
         router.push(`/projects/${data.data.id}`);
+      } else {
+        setStartError(data.error || "Failed to create project");
       }
+    } catch (err) {
+      setStartError(String(err));
     } finally {
       setLoading(false);
     }
@@ -454,6 +466,9 @@ export default function NewProductionPage() {
               {loading ? "Creating..." : "Start Production"}
             </Button>
           </div>
+          {startError && (
+            <p className="text-sm text-red-500 mt-2">{startError}</p>
+          )}
         </div>
       )}
     </div>

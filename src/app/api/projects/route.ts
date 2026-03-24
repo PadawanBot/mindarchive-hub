@@ -23,7 +23,6 @@ export async function POST(request: Request) {
       profile_id: body.profile_id,
       format_id: body.format_id,
       status: "draft",
-      steps: [],
       total_cost_cents: 0,
       topic_data: body.topic_data || null,
       script_data: null,
