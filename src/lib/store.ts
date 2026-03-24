@@ -76,7 +76,10 @@ export async function getAll<T>(collection: string): Promise<T[]> {
       .from(tableName(collection))
       .select("*")
       .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error(`[store] getAll(${collection}) error:`, error.message);
+      return [];
+    }
     return (data || []) as T[];
   }
   const store = await getLocalStore();
