@@ -315,6 +315,7 @@ def config_set(
     from mindarchive.config.settings import CredentialStore, get_settings
 
     if value is None:
+        console.print("[dim]Paste your key and press Enter (input is hidden for security)[/dim]")
         value = getpass.getpass(f"Enter value for {key}: ")
         if not value.strip():
             console.print("[red]No value provided. Aborted.[/red]")
