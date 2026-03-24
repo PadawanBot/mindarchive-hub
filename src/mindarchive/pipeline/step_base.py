@@ -121,11 +121,16 @@ class PipelineStep(ABC):
             output = await self._run(ctx)
         except Exception as e:
             error_detail = str(e)
-            # Extract detailed error body from Anthropic API errors
-            if hasattr(e, "body"):
-                error_detail = f"{e} | body={e.body}"
-            elif hasattr(e, "response") and hasattr(e.response, "text"):
-                error_detail = f"{e} | response={e.response.text}"
+            # Extract detailed error info from Anthropic API errors
+            if hasattr(e, "status_code") and hasattr(e, "message"):
+                error_detail = f"HTTP {e.status_code}: {e.message}"
+                if hasattr(e, "body") and e.body:
+                    error_detail += f" | body={e.body}"
+                if hasattr(e, "response") and e.response is not None:
+                    try:
+                        error_detail += f" | response_text={e.response.text}"
+                    except Exception:
+                        pass
             logger.exception("Step %d failed: %s", self.step_number, error_detail)
             return StepOutput(
                 step_number=self.step_number,

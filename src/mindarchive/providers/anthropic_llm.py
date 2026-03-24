@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 
 from mindarchive.providers.base import LLMResponse
 from mindarchive.services.rate_limiter import RateLimiter
@@ -63,12 +63,19 @@ class AnthropicLLM:
             model, len(messages), len(system_prompt), len(user_prompt),
         )
 
-        response = await self._client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-        )
+        try:
+            response = await self._client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=messages,
+            )
+        except APIStatusError as e:
+            logger.error(
+                "Anthropic API error: status=%d, message=%s, body=%s, headers=%s",
+                e.status_code, e.message, e.body, dict(e.response.headers) if e.response else None,
+            )
+            raise
 
         text = ""
         for block in response.content:
