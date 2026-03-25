@@ -145,19 +145,108 @@ export default function ProjectDetailPage() {
     setCurrentStep(stepId);
     setError(null);
     try {
-      const res = await fetch("/api/pipeline/step", {
+      // Phase 1: Prepare — validate, mark running, get prompt
+      const prepRes = await fetch("/api/pipeline/step/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: params.id, step: stepId }),
       });
-      const text = await res.text();
-      if (!text) { setError(`Empty response for step ${stepId} (status ${res.status})`); return false; }
-      let data;
-      try { data = JSON.parse(text); } catch {
-        setError(`Step "${stepId}" returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+      const prepText = await prepRes.text();
+      if (!prepText) { setError(`Empty response preparing step ${stepId}`); return false; }
+      let prepData;
+      try { prepData = JSON.parse(prepText); } catch {
+        setError(`Step "${stepId}" prepare returned non-JSON (HTTP ${prepRes.status}): ${prepText.slice(0, 200)}`);
         return false;
       }
-      if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
+      if (!prepData.success) { setError(prepData.error || `Step ${stepId} prepare failed`); return false; }
+
+      // Already completed (idempotent)
+      if (prepData.data.already_completed) {
+        await loadSteps();
+        return true;
+      }
+
+      // Non-LLM step — run via the old single-call endpoint
+      if (!prepData.data.needs_llm) {
+        const res = await fetch("/api/pipeline/step", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_id: params.id, step: stepId }),
+        });
+        const text = await res.text();
+        if (!text) { setError(`Empty response for step ${stepId}`); return false; }
+        let data;
+        try { data = JSON.parse(text); } catch {
+          setError(`Step "${stepId}" returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+          return false;
+        }
+        if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
+        await loadSteps();
+        return true;
+      }
+
+      // Phase 2: Stream LLM response (client collects tokens)
+      const { provider, model, system, prompt, maxTokens } = prepData.data;
+      const llmRes = await fetch("/api/pipeline/llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model, system, prompt, maxTokens }),
+      });
+
+      if (!llmRes.ok || !llmRes.body) {
+        const errText = await llmRes.text();
+        setError(`LLM call failed (HTTP ${llmRes.status}): ${errText.slice(0, 200)}`);
+        return false;
+      }
+
+      // Read SSE stream and collect tokens
+      const reader = llmRes.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let llmError = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === "text") fullText += evt.text;
+            else if (evt.type === "done") { inputTokens = evt.inputTokens; outputTokens = evt.outputTokens; }
+            else if (evt.type === "error") llmError = evt.error;
+          } catch {}
+        }
+      }
+
+      if (llmError) { setError(`LLM error: ${llmError}`); return false; }
+      if (!fullText) { setError(`No text generated for step ${stepId}`); return false; }
+
+      // Phase 3: Save result
+      const saveRes = await fetch("/api/pipeline/step/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: params.id,
+          step: stepId,
+          text: fullText,
+          inputTokens,
+          outputTokens,
+          truncated: false,
+        }),
+      });
+      const saveText = await saveRes.text();
+      if (!saveText) { setError(`Empty response saving step ${stepId}`); return false; }
+      let saveData;
+      try { saveData = JSON.parse(saveText); } catch {
+        setError(`Save returned non-JSON (HTTP ${saveRes.status}): ${saveText.slice(0, 200)}`);
+        return false;
+      }
+      if (!saveData.success) { setError(saveData.error || `Save step ${stepId} failed`); return false; }
+
       await loadSteps();
       return true;
     } catch (err) {
