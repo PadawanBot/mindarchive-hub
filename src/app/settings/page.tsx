@@ -183,7 +183,7 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Default Model</label>
               <Select
-                value={settings.default_model || "claude-sonnet-4-6"}
+                value={settings.default_model || "claude-haiku-4-5-20251001"}
                 onChange={(e) =>
                   setSettings((prev) => ({ ...prev, default_model: e.target.value }))
                 }
