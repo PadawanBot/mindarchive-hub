@@ -245,12 +245,14 @@ const image_generation: StepExecutor = async (ctx) => {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Generate up to 3 images to stay within timeout
+  // Generate 1 image to fit within Vercel 60s limit (DALL-E takes ~15-20s per image)
+  // Additional images can be generated in a future batch step
   const images: { prompt: string; url: string; revised_prompt: string }[] = [];
-  const maxImages = Math.min(prompts.length, 3);
-  for (let i = 0; i < maxImages; i++) {
-    const img = await generateImage(key, prompts[i]);
-    images.push({ prompt: prompts[i], url: img.url, revised_prompt: img.revisedPrompt });
+  try {
+    const img = await generateImage(key, prompts[0]);
+    images.push({ prompt: prompts[0], url: img.url, revised_prompt: img.revisedPrompt });
+  } catch (err) {
+    return { output: { status: "completed", images: [], error: String(err), total_prompts: prompts.length, generated: 0 }, cost_cents: 0 };
   }
 
   return {
