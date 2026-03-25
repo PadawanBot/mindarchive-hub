@@ -287,6 +287,37 @@ export default function ProjectDetailPage() {
     await loadProject();
   };
 
+  const rerunProduction = async () => {
+    setRunning(true);
+    setError(null);
+    abortRef.current = false;
+
+    // Reset production steps (skipped/completed) back to pending
+    const prodStepIds = PROD_STEPS.map(s => s.id);
+    try {
+      const res = await fetch("/api/pipeline/step/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: params.id, steps: prodStepIds }),
+      });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Failed to reset steps"); setRunning(false); return; }
+    } catch (err) { setError(String(err)); setRunning(false); return; }
+
+    await loadSteps();
+
+    // Run only production steps
+    for (const step of PROD_STEPS) {
+      if (abortRef.current) break;
+      const ok = await runStep(step.id);
+      if (!ok) break;
+    }
+
+    setCurrentStep(null);
+    setRunning(false);
+    await loadProject();
+  };
+
   const stopPipeline = () => {
     abortRef.current = true;
   };
@@ -342,10 +373,17 @@ export default function ProjectDetailPage() {
               <XCircle className="h-4 w-4 mr-2" /> Stop
             </Button>
           ) : (
-            <Button onClick={runAllSteps} disabled={project.status === "completed"}>
-              <Play className="h-4 w-4 mr-2" />
-              {completedCount > 0 ? "Resume Pipeline" : "Run Pipeline"}
-            </Button>
+            <>
+              <Button onClick={runAllSteps} disabled={project.status === "completed"}>
+                <Play className="h-4 w-4 mr-2" />
+                {completedCount > 0 ? "Resume Pipeline" : "Run Pipeline"}
+              </Button>
+              {project.status === "completed" && (
+                <Button variant="outline" onClick={rerunProduction}>
+                  <RefreshCw className="h-4 w-4 mr-2" /> Re-run Production
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
