@@ -187,6 +187,7 @@ export default function ProjectDetailPage() {
         <Link href="/projects">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
+        <span className="text-[10px] text-muted-foreground/50">v2.1</span>
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{project.title}</h1>
@@ -207,18 +208,6 @@ export default function ProjectDetailPage() {
           )}
         </div>
       </div>
-
-      {/* Debug: step output availability */}
-      {steps.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          Steps with output: {steps.filter(s => s.output && Object.keys(s.output).length > 0).length}/{steps.length}
-          {steps.filter(s => s.status === "completed" && (!s.output || Object.keys(s.output).length === 0)).length > 0 && (
-            <span className="text-yellow-500 ml-2">
-              (missing output: {steps.filter(s => s.status === "completed" && (!s.output || Object.keys(s.output).length === 0)).map(s => s.step).join(", ")})
-            </span>
-          )}
-        </p>
-      )}
 
       {/* Progress bar */}
       <div className="flex items-center gap-3">
@@ -254,16 +243,17 @@ export default function ProjectDetailPage() {
           {PRE_PROD_STEPS.map((def) => {
             const stepData = steps.find(s => s.step === def.id);
             const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            const isCompleted = status === "completed" || status === "skipped";
             const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
             const isExpanded = expandedStep === def.id;
             return (
               <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
                 <div
-                  className={`flex items-center gap-3 p-3 ${hasOutput ? "cursor-pointer hover:bg-muted/80" : ""}`}
-                  onClick={() => hasOutput && setExpandedStep(isExpanded ? null : def.id)}
+                  className={`flex items-center gap-3 p-3 ${isCompleted ? "cursor-pointer hover:bg-muted/80" : ""}`}
+                  onClick={() => isCompleted && setExpandedStep(isExpanded ? null : def.id)}
                 >
                   {statusIcon(status)}
-                  {hasOutput && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
+                  {isCompleted && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
                   <span className="text-sm font-medium flex-1">
                     <span className="text-muted-foreground mr-2">{def.order}.</span>
                     {def.label}
@@ -281,10 +271,10 @@ export default function ProjectDetailPage() {
                   )}
                   <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
                 </div>
-                {isExpanded && hasOutput && (
+                {isExpanded && isCompleted && (
                   <div className="px-3 pb-3">
                     <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
-                      {formatStepOutput(stepData!.output!)}
+                      {hasOutput ? formatStepOutput(stepData!.output!) : `No output data stored. Step keys: ${stepData ? Object.keys(stepData).join(", ") : "none"}`}
                     </pre>
                   </div>
                 )}
@@ -304,16 +294,17 @@ export default function ProjectDetailPage() {
           {PROD_STEPS.map((def) => {
             const stepData = steps.find(s => s.step === def.id);
             const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            const isCompleted = status === "completed" || status === "skipped";
             const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
             const isExpanded = expandedStep === def.id;
             return (
               <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
                 <div
-                  className={`flex items-center gap-3 p-3 ${hasOutput ? "cursor-pointer hover:bg-muted/80" : ""}`}
-                  onClick={() => hasOutput && setExpandedStep(isExpanded ? null : def.id)}
+                  className={`flex items-center gap-3 p-3 ${isCompleted ? "cursor-pointer hover:bg-muted/80" : ""}`}
+                  onClick={() => isCompleted && setExpandedStep(isExpanded ? null : def.id)}
                 >
                   {statusIcon(status)}
-                  {hasOutput && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
+                  {isCompleted && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
                   <span className="text-sm font-medium flex-1">
                     <span className="text-muted-foreground mr-2">{def.order}.</span>
                     {def.label}
@@ -331,10 +322,10 @@ export default function ProjectDetailPage() {
                   )}
                   <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
                 </div>
-                {isExpanded && hasOutput && (
+                {isExpanded && isCompleted && (
                   <div className="px-3 pb-3">
                     <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
-                      {formatStepOutput(stepData!.output!)}
+                      {hasOutput ? formatStepOutput(stepData!.output!) : `No output data stored. Step keys: ${stepData ? Object.keys(stepData).join(", ") : "none"}`}
                     </pre>
                   </div>
                 )}
