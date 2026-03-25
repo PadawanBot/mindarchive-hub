@@ -102,37 +102,14 @@ export default function ProjectDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: params.id, step: stepId }),
       });
-
-      // Handle non-streaming JSON responses (validation errors, already completed)
-      const contentType = res.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
-        const data = await res.json();
-        if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
-        await loadSteps();
-        return true;
+      const text = await res.text();
+      if (!text) { setError(`Empty response for step ${stepId} (status ${res.status})`); return false; }
+      let data;
+      try { data = JSON.parse(text); } catch {
+        setError(`Step "${stepId}" returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+        return false;
       }
-
-      // Handle SSE streaming response (long-running step execution)
-      if (!res.body) { setError(`No response body for step ${stepId}`); return false; }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let lastResult: { success?: boolean; error?: string } | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split("\n")) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            if (!parsed.heartbeat) lastResult = parsed;
-          } catch {}
-        }
-      }
-
-      if (!lastResult) { setError(`No result received for step ${stepId}`); return false; }
-      if (!lastResult.success) { setError(lastResult.error || `Step ${stepId} failed`); return false; }
+      if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
       await loadSteps();
       return true;
     } catch (err) {
