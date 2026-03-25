@@ -31,8 +31,8 @@ async function callLLM(
   prompt: string,
   maxTokens = 4096
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
-  const provider = ctx.profile?.llm_provider || ctx.settings.default_llm || "anthropic";
-  const model = ctx.profile?.llm_model || ctx.settings.default_model || "claude-sonnet-4-6";
+  const provider = ctx.profile?.llm_provider || ctx.settings.default_llm_provider || "anthropic";
+  const model = ctx.profile?.llm_model || ctx.settings.default_llm_model || "claude-sonnet-4-6";
   const key = provider === "anthropic" ? ctx.settings.anthropic_key : ctx.settings.openai_key;
   if (!key) throw new Error(`${provider} API key not configured. Go to Settings.`);
   if (provider === "anthropic") return generateWithClaude(key, model, system, prompt, maxTokens);
@@ -40,7 +40,7 @@ async function callLLM(
 }
 
 export function estimateCost(ctx: StepContext, inputTokens: number, outputTokens: number): number {
-  const model = ctx.profile?.llm_model || ctx.settings.default_model || "claude-sonnet-4-6";
+  const model = ctx.profile?.llm_model || ctx.settings.default_llm_model || "claude-sonnet-4-6";
   const pricing: Record<string, { input: number; output: number }> = {
     "claude-sonnet-4-6": { input: 300, output: 1500 },
     "claude-opus-4-6": { input: 1500, output: 7500 },

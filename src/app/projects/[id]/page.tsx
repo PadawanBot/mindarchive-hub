@@ -104,7 +104,12 @@ export default function ProjectDetailPage() {
       });
       const text = await res.text();
       if (!text) { setError(`Empty response for step ${stepId} (status ${res.status})`); return false; }
-      const data = JSON.parse(text);
+      // Guard against non-JSON responses (e.g. Next.js error pages, timeouts)
+      let data;
+      try { data = JSON.parse(text); } catch {
+        setError(`Step "${stepId}" returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+        return false;
+      }
       if (!data.success) { setError(data.error || `Step ${stepId} failed`); return false; }
       await loadSteps();
       return true;
@@ -119,15 +124,30 @@ export default function ProjectDetailPage() {
     setError(null);
     abortRef.current = false;
 
+    // Fetch fresh step state before starting
+    let freshSteps: StepResult[] = [];
+    try {
+      const res = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
+      const d = await res.json();
+      if (d.success) freshSteps = d.data;
+    } catch {}
+
     for (const step of STEPS) {
       if (abortRef.current) break;
 
-      // Skip already completed/skipped steps
-      const existing = steps.find(s => s.step === step.id);
+      // Skip already completed/skipped steps using fresh data
+      const existing = freshSteps.find(s => s.step === step.id);
       if (existing?.status === "completed" || existing?.status === "skipped") continue;
 
       const ok = await runStep(step.id);
       if (!ok) break;
+
+      // Refresh step data after each successful step
+      try {
+        const res = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
+        const d = await res.json();
+        if (d.success) freshSteps = d.data;
+      } catch {}
     }
 
     setCurrentStep(null);
