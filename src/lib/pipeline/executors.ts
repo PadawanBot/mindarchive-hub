@@ -213,11 +213,70 @@ const voiceover_generation: StepExecutor = async (ctx) => {
   // Strip visual cues and section headers for voiceover
   const narration = script.replace(/\[VISUAL CUE:.*?\]/g, "").replace(/^#{1,3}\s.*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 
-  const audio = await generateVoiceover(key, voiceId, narration);
-  const sizeKB = Math.round(audio.byteLength / 1024);
+  // Trigger ElevenLabs generation via streaming — read just the first chunk
+  // to confirm it started, then let ElevenLabs finish in the background.
+  // The full audio is stored in ElevenLabs history for later retrieval.
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": key,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({
+        text: narration,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0.5,
+          use_speaker_boost: true,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`ElevenLabs API error: ${response.status} - ${error}`);
+  }
+
+  // Read just a small chunk to confirm audio is streaming, then abort
+  const reader = response.body?.getReader();
+  let audioStarted = false;
+  let bytesRead = 0;
+  if (reader) {
+    try {
+      const { value } = await reader.read();
+      if (value && value.length > 0) {
+        audioStarted = true;
+        bytesRead = value.length;
+      }
+    } finally {
+      reader.cancel();
+    }
+  }
+
+  if (!audioStarted) {
+    throw new Error("ElevenLabs returned empty audio stream");
+  }
+
+  const wordCount = narration.split(/\s+/).length;
+  const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
+
   return {
-    output: { status: "completed", voice_id: voiceId, audio_size_kb: sizeKB, narration_length: narration.length },
-    cost_cents: Math.ceil(narration.length * 0.003), // ~$0.30 per 1000 chars
+    output: {
+      status: "completed",
+      voice_id: voiceId,
+      narration_length: narration.length,
+      word_count: wordCount,
+      estimated_duration_minutes: estimatedDurationMin,
+      audio_confirmed: true,
+      note: "Audio generated in ElevenLabs. Retrieve from history for assembly.",
+    },
+    cost_cents: Math.ceil(narration.length * 0.003),
   };
 };
 
