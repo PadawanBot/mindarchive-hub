@@ -251,7 +251,12 @@ export async function GET(request: NextRequest) {
   }
 
   const slug = slugify(project.title) || "project";
-  const filename = `${slug}-export.${format}`;
+  // For single-step exports, use step-specific filename
+  const isSingleStep = stepsParam !== "all" && !stepsParam.includes(",") && allSteps.length === 1;
+  const stepSlug = isSingleStep ? slugify(getStepLabel(allSteps[0].step)) : null;
+  const filename = stepSlug
+    ? `${slug}_${stepSlug}.${format}`
+    : `${slug}-export.${format}`;
 
   return new NextResponse(body, {
     status: 200,

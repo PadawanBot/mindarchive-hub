@@ -16,6 +16,8 @@ import {
   SkipForward,
   AlertCircle,
   RefreshCw,
+  Download,
+  ExternalLink,
 } from "lucide-react";
 import type { Project, StepResult, StepStatus } from "@/types";
 
@@ -551,15 +553,43 @@ export default function ProjectDetailPage() {
                 const output = stepData?.output;
                 return (
                   <div key={o.step}>
-                    <h3 className="text-sm font-semibold text-muted-foreground mb-2">{o.label}</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-sm font-semibold text-muted-foreground">{o.label}</h3>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                          onClick={() => window.open(`/api/export?project_id=${params.id}&steps=${o.step}&format=md`, '_blank')}>
+                          <Download className="h-3 w-3 mr-1" /> MD
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                          onClick={() => window.open(`/api/export?project_id=${params.id}&steps=${o.step}&format=txt`, '_blank')}>
+                          TXT
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                          onClick={() => window.open(`/api/export?project_id=${params.id}&steps=${o.step}&format=json`, '_blank')}>
+                          JSON
+                        </Button>
+                      </div>
+                    </div>
                     {/* Image Generation — show thumbnails */}
                     {o.step === "image_generation" && output?.images && Array.isArray(output.images) ? (
                       <div className="space-y-3">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          {(output.images as { url: string; prompt: string; revised_prompt: string }[]).map((img, i) => (
+                          {(output.images as { url: string; prompt: string; revised_prompt: string; stored?: boolean }[]).map((img, i) => (
                             <div key={i} className="rounded-lg overflow-hidden border border-muted">
-                              <img src={img.url} alt={`Scene ${i + 1}`} className="w-full h-48 object-cover" />
-                              <p className="text-xs text-muted-foreground p-2 line-clamp-2">{img.revised_prompt || img.prompt}</p>
+                              <a href={img.url} target="_blank" rel="noopener noreferrer" className="block">
+                                <img
+                                  src={img.url}
+                                  alt={`Scene ${i + 1}`}
+                                  className="w-full h-48 object-cover hover:opacity-80 transition-opacity"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="w-full h-48 flex items-center justify-center bg-muted text-xs text-muted-foreground">Image expired or unavailable</div>'; }}
+                                />
+                              </a>
+                              <div className="p-2 flex items-start gap-2">
+                                <p className="text-xs text-muted-foreground flex-1 line-clamp-2">{img.revised_prompt || img.prompt}</p>
+                                <a href={img.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                                  <ExternalLink className="h-3 w-3 text-muted-foreground hover:text-primary" />
+                                </a>
+                              </div>
                             </div>
                           ))}
                         </div>
