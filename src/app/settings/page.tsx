@@ -29,6 +29,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, "success" | "error" | null>>({});
+  const [testErrors, setTestErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch("/api/settings")
@@ -68,19 +69,22 @@ export default function SettingsPage() {
 
   const handleTest = async (providerKey: string) => {
     setTestResults((prev) => ({ ...prev, [providerKey]: null }));
+    setTestErrors((prev) => ({ ...prev, [providerKey]: "" }));
     try {
       const res = await fetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerKey, key: settings[providerKey] }),
+        body: JSON.stringify({ provider: providerKey, key: (settings[providerKey] || "").trim() }),
       });
       const data = await res.json();
       setTestResults((prev) => ({
         ...prev,
         [providerKey]: data.success ? "success" : "error",
       }));
-    } catch {
+      if (!data.success) setTestErrors((prev) => ({ ...prev, [providerKey]: data.error || "Unknown error" }));
+    } catch (err) {
       setTestResults((prev) => ({ ...prev, [providerKey]: "error" }));
+      setTestErrors((prev) => ({ ...prev, [providerKey]: String(err) }));
     }
   };
 
@@ -110,7 +114,7 @@ export default function SettingsPage() {
                   </Badge>
                 )}
                 {testResults[provider.key] === "error" && (
-                  <Badge variant="destructive">
+                  <Badge variant="destructive" title={testErrors[provider.key] || ""}>
                     <AlertCircle className="h-3 w-3 mr-1" /> Failed
                   </Badge>
                 )}
@@ -155,6 +159,9 @@ export default function SettingsPage() {
                   Test
                 </Button>
               </div>
+              {testErrors[provider.key] && testResults[provider.key] === "error" && (
+                <p className="text-xs text-red-400 mt-1">{testErrors[provider.key]}</p>
+              )}
             </div>
           ))}
         </CardContent>

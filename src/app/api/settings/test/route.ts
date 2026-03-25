@@ -14,7 +14,8 @@ export async function POST(request: Request) {
     }
 
     // If the key is masked (loaded from GET), read the real key from the store
-    const realKey = key.includes("****") ? (await getSetting(provider)) || "" : key;
+    const trimmedKey = key.trim();
+    const realKey = trimmedKey.includes("****") ? (await getSetting(provider)) || "" : trimmedKey;
     if (!realKey) {
       return NextResponse.json(
         { success: false, error: "API key not found in store" },
