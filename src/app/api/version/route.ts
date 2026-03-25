@@ -19,7 +19,12 @@ export async function GET() {
       if (key) {
         const sb = createClient(url, key);
         const { data, error } = await sb.from("settings").select("key").limit(1);
-        supabaseStatus = error ? `error: ${error.message}` : `connected (${data?.length ?? 0} settings)`;
+        // Also check pipeline_steps for output data
+        const { data: stepData } = await sb.from("pipeline_steps").select("step, status, output").limit(5);
+        const stepsWithOutput = stepData?.filter((s: { output: unknown }) => s.output !== null).length ?? 0;
+        supabaseStatus = error
+          ? `error: ${error.message}`
+          : `connected (${data?.length ?? 0} settings, ${stepData?.length ?? 0} steps, ${stepsWithOutput} with output)`;
       } else {
         supabaseStatus = "no key found";
       }
