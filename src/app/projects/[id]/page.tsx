@@ -16,8 +16,6 @@ import {
   SkipForward,
   AlertCircle,
   RefreshCw,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
 import type { Project, StepResult, StepStatus } from "@/types";
 
@@ -46,6 +44,23 @@ const STEPS = [
 const PRE_PROD_STEPS = STEPS.filter(s => s.phase === "pre_production");
 const PROD_STEPS = STEPS.filter(s => s.phase === "production");
 
+// Step output display names (maps output key to readable label)
+const OUTPUT_LABELS: Record<string, string> = {
+  research: "Topic Research",
+  script: "Script",
+  hooks: "Hooks",
+  voice_params: "Voice Parameters",
+  visuals: "Visual Direction",
+  blend_plan: "Blend Plan",
+  brand: "Brand Assets",
+  refined_script: "Refined Script",
+  timing: "Timing Sync",
+  thumbnails: "Thumbnail Concepts",
+  retention: "Retention Structure",
+  engagement: "Comment Magnets",
+  upload: "Upload Blueprint",
+};
+
 function statusIcon(status: StepStatus | "pending") {
   switch (status) {
     case "completed": return <CheckCircle className="h-4 w-4 text-green-500" />;
@@ -54,14 +69,6 @@ function statusIcon(status: StepStatus | "pending") {
     case "skipped": return <SkipForward className="h-4 w-4 text-muted-foreground" />;
     default: return <Clock className="h-4 w-4 text-muted-foreground" />;
   }
-}
-
-function formatStepOutput(output: Record<string, unknown>): string {
-  // Find the main text field in the output (research, script, hooks, etc.)
-  for (const val of Object.values(output)) {
-    if (typeof val === "string" && val.length > 50) return val;
-  }
-  return JSON.stringify(output, null, 2);
 }
 
 function statusVariant(status: string): "success" | "destructive" | "default" | "outline" {
@@ -73,6 +80,37 @@ function statusVariant(status: string): "success" | "destructive" | "default" | 
   }
 }
 
+function StepRow({ def, stepData, currentStep, running, onRetry }: {
+  def: typeof STEPS[0];
+  stepData?: StepResult;
+  currentStep: string | null;
+  running: boolean;
+  onRetry: (id: string) => void;
+}) {
+  const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+      {statusIcon(status)}
+      <span className="text-sm font-medium flex-1">
+        <span className="text-muted-foreground mr-2">{def.order}.</span>
+        {def.label}
+      </span>
+      {stepData?.duration_ms && stepData.duration_ms > 0 && (
+        <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+      )}
+      {stepData?.cost_cents && stepData.cost_cents > 0 && (
+        <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
+      )}
+      {status === "failed" && !running && (
+        <Button variant="ghost" size="sm" onClick={() => onRetry(def.id)}>
+          <RefreshCw className="h-3 w-3 mr-1" /> Retry
+        </Button>
+      )}
+      <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
+    </div>
+  );
+}
+
 export default function ProjectDetailPage() {
   const params = useParams();
   const [project, setProject] = useState<Project | null>(null);
@@ -81,7 +119,6 @@ export default function ProjectDetailPage() {
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef(false);
-  const [expandedStep, setExpandedStep] = useState<string | null>(null);
 
   const loadProject = useCallback(async () => {
     try {
@@ -134,7 +171,6 @@ export default function ProjectDetailPage() {
     setError(null);
     abortRef.current = false;
 
-    // Fetch fresh step state before starting
     let freshSteps: StepResult[] = [];
     try {
       const res = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
@@ -144,15 +180,12 @@ export default function ProjectDetailPage() {
 
     for (const step of STEPS) {
       if (abortRef.current) break;
-
-      // Skip already completed/skipped steps using fresh data
       const existing = freshSteps.find(s => s.step === step.id);
       if (existing?.status === "completed" || existing?.status === "skipped") continue;
 
       const ok = await runStep(step.id);
       if (!ok) break;
 
-      // Refresh step data after each successful step
       try {
         const res = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
         const d = await res.json();
@@ -180,6 +213,26 @@ export default function ProjectDetailPage() {
   const completedCount = steps.filter(s => s.status === "completed" || s.status === "skipped").length;
   const totalCost = steps.reduce((sum, s) => sum + (s.cost_cents || 0), 0);
 
+  // Collect completed step outputs for display below the pipeline
+  const completedOutputs = steps
+    .filter(s => s.status === "completed" && s.output && Object.keys(s.output).length > 0)
+    .map(s => {
+      const def = STEPS.find(d => d.id === s.step);
+      // Find the main text value in the output
+      let mainText = "";
+      let label = def?.label || s.step;
+      for (const [key, val] of Object.entries(s.output!)) {
+        if (typeof val === "string" && val.length > 50) {
+          mainText = val;
+          if (OUTPUT_LABELS[key]) label = OUTPUT_LABELS[key];
+          break;
+        }
+      }
+      if (!mainText) mainText = JSON.stringify(s.output, null, 2);
+      return { step: s.step, label, text: mainText, order: def?.order || 0 };
+    })
+    .sort((a, b) => a.order - b.order);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -187,7 +240,6 @@ export default function ProjectDetailPage() {
         <Link href="/projects">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
-        <span className="text-[10px] text-muted-foreground/50">v2.1</span>
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{project.title}</h1>
@@ -240,47 +292,16 @@ export default function ProjectDetailPage() {
           <Badge variant="outline" className="text-xs">{PRE_PROD_STEPS.length} steps</Badge>
         </CardTitle>
         <CardContent className="mt-4 space-y-2">
-          {PRE_PROD_STEPS.map((def) => {
-            const stepData = steps.find(s => s.step === def.id);
-            const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
-            const isCompleted = status === "completed" || status === "skipped";
-            const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
-            const isExpanded = expandedStep === def.id;
-            return (
-              <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
-                <div
-                  className={`flex items-center gap-3 p-3 ${isCompleted ? "cursor-pointer hover:bg-muted/80" : ""}`}
-                  onClick={() => isCompleted && setExpandedStep(isExpanded ? null : def.id)}
-                >
-                  {statusIcon(status)}
-                  {isCompleted && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
-                  <span className="text-sm font-medium flex-1">
-                    <span className="text-muted-foreground mr-2">{def.order}.</span>
-                    {def.label}
-                  </span>
-                  {stepData?.duration_ms && stepData.duration_ms > 0 && (
-                    <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
-                  )}
-                  {stepData?.cost_cents && stepData.cost_cents > 0 && (
-                    <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
-                  )}
-                  {status === "failed" && !running && (
-                    <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); runStep(def.id); }}>
-                      <RefreshCw className="h-3 w-3 mr-1" /> Retry
-                    </Button>
-                  )}
-                  <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
-                </div>
-                {isExpanded && isCompleted && (
-                  <div className="px-3 pb-3">
-                    <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
-                      {hasOutput ? formatStepOutput(stepData!.output!) : `No output data stored. Step keys: ${stepData ? Object.keys(stepData).join(", ") : "none"}`}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {PRE_PROD_STEPS.map((def) => (
+            <StepRow
+              key={def.id}
+              def={def}
+              stepData={steps.find(s => s.step === def.id)}
+              currentStep={currentStep}
+              running={running}
+              onRetry={runStep}
+            />
+          ))}
         </CardContent>
       </Card>
 
@@ -291,49 +312,37 @@ export default function ProjectDetailPage() {
           <Badge variant="outline" className="text-xs">{PROD_STEPS.length} steps</Badge>
         </CardTitle>
         <CardContent className="mt-4 space-y-2">
-          {PROD_STEPS.map((def) => {
-            const stepData = steps.find(s => s.step === def.id);
-            const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
-            const isCompleted = status === "completed" || status === "skipped";
-            const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
-            const isExpanded = expandedStep === def.id;
-            return (
-              <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
-                <div
-                  className={`flex items-center gap-3 p-3 ${isCompleted ? "cursor-pointer hover:bg-muted/80" : ""}`}
-                  onClick={() => isCompleted && setExpandedStep(isExpanded ? null : def.id)}
-                >
-                  {statusIcon(status)}
-                  {isCompleted && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
-                  <span className="text-sm font-medium flex-1">
-                    <span className="text-muted-foreground mr-2">{def.order}.</span>
-                    {def.label}
-                  </span>
-                  {stepData?.duration_ms && stepData.duration_ms > 0 && (
-                    <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
-                  )}
-                  {stepData?.cost_cents && stepData.cost_cents > 0 && (
-                    <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
-                  )}
-                  {status === "failed" && !running && (
-                    <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); runStep(def.id); }}>
-                      <RefreshCw className="h-3 w-3 mr-1" /> Retry
-                    </Button>
-                  )}
-                  <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
-                </div>
-                {isExpanded && isCompleted && (
-                  <div className="px-3 pb-3">
-                    <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
-                      {hasOutput ? formatStepOutput(stepData!.output!) : `No output data stored. Step keys: ${stepData ? Object.keys(stepData).join(", ") : "none"}`}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {PROD_STEPS.map((def) => (
+            <StepRow
+              key={def.id}
+              def={def}
+              stepData={steps.find(s => s.step === def.id)}
+              currentStep={currentStep}
+              running={running}
+              onRetry={runStep}
+            />
+          ))}
         </CardContent>
       </Card>
+
+      {/* Step Outputs — shown below pipeline like the Script card */}
+      {completedOutputs.length > 0 && (
+        <Card>
+          <CardTitle>Step Outputs</CardTitle>
+          <CardContent className="mt-4 space-y-6">
+            {completedOutputs
+              .filter(o => o.step !== "script_writing" && o.step !== "script_refinement")
+              .map((o) => (
+                <div key={o.step}>
+                  <h3 className="text-sm font-semibold text-muted-foreground mb-2">{o.label}</h3>
+                  <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-64 overflow-y-auto">
+                    {o.text}
+                  </pre>
+                </div>
+              ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Script Preview */}
       {project.script_data && (

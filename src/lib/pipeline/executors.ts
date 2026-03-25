@@ -32,15 +32,8 @@ async function callLLM(
   maxTokens = 4096
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const provider = ctx.profile?.llm_provider || ctx.settings.default_provider || ctx.settings.default_llm_provider || "anthropic";
-  // Resolve user-configured model
-  const configuredModel = ctx.profile?.llm_model || ctx.settings.default_model || ctx.settings.default_llm_model || "claude-haiku-4-5-20251001";
-  // On Vercel Hobby (60s function limit), force Haiku to avoid timeouts.
-  // Sonnet/Opus routinely exceed 60s on script-heavy steps.
-  const isVercel = !!process.env.VERCEL;
-  const slowModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-  const model = (isVercel && slowModels.includes(configuredModel))
-    ? "claude-haiku-4-5-20251001"
-    : configuredModel;
+  // Hardcode Haiku — Vercel Hobby 60s limit makes Sonnet/Opus impossible
+  const model = "claude-haiku-4-5-20251001";
   const key = provider === "anthropic" ? ctx.settings.anthropic_key : ctx.settings.openai_key;
   if (!key) throw new Error(`${provider} API key not configured. Go to Settings.`);
   if (provider === "anthropic") return generateWithClaude(key, model, system, prompt, maxTokens);
