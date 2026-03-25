@@ -3,8 +3,9 @@ import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
 import { generateImage } from "@/lib/providers/openai";
 import { generateVoiceover } from "@/lib/providers/elevenlabs";
-import { downloadAndStore } from "@/lib/storage";
+import { downloadAndStore, uploadAsset } from "@/lib/storage";
 import { searchVideos } from "@/lib/providers/pexels";
+import { generateVideoFromImage } from "@/lib/providers/runway";
 
 // ─── Context passed to every executor ───
 
@@ -244,25 +245,42 @@ const voiceover_generation: StepExecutor = async (ctx) => {
     throw new Error(`ElevenLabs API error: ${response.status} - ${error}`);
   }
 
-  // Read just a small chunk to confirm audio is streaming, then abort
+  // Read the full audio stream with a timeout
   const reader = response.body?.getReader();
-  let audioStarted = false;
-  let bytesRead = 0;
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
   if (reader) {
+    const timeout = setTimeout(() => reader.cancel(), 45_000);
     try {
-      const { value } = await reader.read();
-      if (value && value.length > 0) {
-        audioStarted = true;
-        bytesRead = value.length;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        totalBytes += value.length;
       }
+    } catch {
+      // Timeout or stream error — use what we have
     } finally {
-      reader.cancel();
+      clearTimeout(timeout);
     }
   }
 
-  if (!audioStarted) {
-    throw new Error("ElevenLabs returned empty audio stream");
+  if (totalBytes === 0) {
+    throw new Error("ElevenLabs returned empty audio");
   }
+
+  // Combine chunks and upload to Supabase Storage
+  const audioBuffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    audioBuffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const audioUrl = await uploadAsset(
+    ctx.project.id, "voiceover.mp3", audioBuffer.buffer, "audio/mpeg"
+  );
 
   const wordCount = narration.split(/\s+/).length;
   const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
@@ -275,7 +293,9 @@ const voiceover_generation: StepExecutor = async (ctx) => {
       word_count: wordCount,
       estimated_duration_minutes: estimatedDurationMin,
       audio_confirmed: true,
-      note: "Audio generated in ElevenLabs. Retrieve from history for assembly.",
+      audio_url: audioUrl,
+      audio_size_bytes: totalBytes,
+      note: "Audio uploaded to Supabase Storage.",
     },
     cost_cents: Math.ceil(narration.length * 0.003),
   };
@@ -362,24 +382,72 @@ const stock_footage: StepExecutor = async (ctx) => {
 const motion_graphics: StepExecutor = async (ctx) => {
   const timing = (getPrevOutput(ctx.previousSteps, "timing_sync") as { timing?: string })?.timing || "";
   const brand = (getPrevOutput(ctx.previousSteps, "brand_assets") as { brand?: string })?.brand || "";
+  const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
+
+  const result = await callLLM(ctx,
+    "You are a motion graphics designer for faceless YouTube videos. Generate structured JSON motion graphic specs that an ffmpeg/Pillow rendering pipeline can consume. Output as JSON with fields: lower_thirds (array of {text, x, y, font_size, color, bg_color, start_time_seconds, end_time_seconds, animation}), title_cards (array of {text, style, duration_seconds, position}), transitions (array of {type, timestamp_seconds, duration_ms}), overlays (array of {type, text, position, start_time, end_time, style}).",
+    `Generate motion graphic specs for this video production.\n\nTiming data:\n${timing.slice(0, 2000)}\n\nBrand assets:\n${brand.slice(0, 1500)}\n\nRefined script excerpt:\n${script.slice(0, 2000)}`
+  );
+
   return {
     output: {
       status: "ready_for_render",
-      message: "Motion graphic definitions generated. Pillow/ffmpeg worker handles rendering.",
+      motion_specs: result.text,
       timing_data: timing.slice(0, 500),
       brand_data: brand.slice(0, 500),
     },
-    cost_cents: 0,
+    cost_cents: estimateCost(ctx, result.inputTokens, result.outputTokens),
   };
 };
 
-const hero_scenes: StepExecutor = async () => {
+const hero_scenes: StepExecutor = async (ctx) => {
+  const key = ctx.settings.runway_key;
+  if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
+
+  // Get DALL-E image URLs from the image_generation step output
+  const imageOutput = getPrevOutput(ctx.previousSteps, "image_generation") as
+    | { images?: { url: string; prompt: string; revised_prompt: string }[] }
+    | undefined;
+  const images = imageOutput?.images || [];
+
+  if (images.length === 0) {
+    return { output: { status: "skipped", reason: "No images available from image_generation step" }, cost_cents: 0 };
+  }
+
+  // For each image (up to 2), start a Runway video generation task
+  const scenesToProcess = images.slice(0, 2);
+  const scenes: { imageUrl: string; promptText: string; taskId: string }[] = [];
+
+  for (const scene of scenesToProcess) {
+    try {
+      const promptText = scene.revised_prompt || scene.prompt || ctx.project.topic;
+      const result = await generateVideoFromImage(key, scene.url, promptText);
+      scenes.push({
+        imageUrl: scene.url,
+        promptText,
+        taskId: result.taskId,
+      });
+    } catch (err) {
+      scenes.push({
+        imageUrl: scene.url,
+        promptText: scene.revised_prompt || scene.prompt || ctx.project.topic,
+        taskId: `error: ${String(err)}`,
+      });
+    }
+  }
+
+  const successCount = scenes.filter((s) => !s.taskId.startsWith("error:")).length;
+
   return {
     output: {
-      status: "stub",
-      message: "Runway AI integration pending. Hero scene generation will be available in a future update.",
+      status: successCount > 0 ? "completed" : "failed",
+      scenes,
+      total_requested: scenesToProcess.length,
+      tasks_started: successCount,
+      note: "Video generation tasks started. Poll /api/pipeline/runway/status?task_id=<id> for completion.",
     },
-    cost_cents: 0,
+    // Runway Gen-4 Turbo costs ~$0.50 per 5s clip
+    cost_cents: successCount * 50,
   };
 };
 

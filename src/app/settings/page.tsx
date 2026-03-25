@@ -20,6 +20,7 @@ const providers: ProviderConfig[] = [
   { key: "openai_key", label: "OpenAI (GPT + DALL-E)", placeholder: "sk-..." },
   { key: "elevenlabs_key", label: "ElevenLabs (Voice)", placeholder: "xi-..." },
   { key: "pexels_key", label: "Pexels (Stock Media)", placeholder: "..." },
+  { key: "runway_key", label: "Runway ML (Video)", placeholder: "rw-..." },
 ];
 
 export default function SettingsPage() {

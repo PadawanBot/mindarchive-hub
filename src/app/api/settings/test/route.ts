@@ -59,6 +59,18 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true });
       }
 
+      case "runway_key": {
+        // Just verify the key format - Runway doesn't have a simple test endpoint
+        if (!realKey.startsWith("rw-") && !realKey.startsWith("key_")) {
+          throw new Error("Invalid Runway API key format");
+        }
+        // Try to import SDK as a connection test
+        const { default: RunwayML } = await import("@runwayml/sdk");
+        // A lightweight check - creating the client validates format
+        new RunwayML({ apiKey: realKey });
+        return NextResponse.json({ success: true });
+      }
+
       default:
         return NextResponse.json(
           { success: false, error: "Unknown provider" },

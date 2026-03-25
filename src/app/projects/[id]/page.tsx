@@ -546,14 +546,116 @@ export default function ProjectDetailPage() {
           <CardContent className="mt-4 space-y-6">
             {completedOutputs
               .filter(o => o.step !== "script_writing" && o.step !== "script_refinement")
-              .map((o) => (
-                <div key={o.step}>
-                  <h3 className="text-sm font-semibold text-muted-foreground mb-2">{o.label}</h3>
-                  <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-64 overflow-y-auto">
-                    {o.text}
-                  </pre>
-                </div>
-              ))}
+              .map((o) => {
+                const stepData = steps.find(s => s.step === o.step);
+                const output = stepData?.output;
+                return (
+                  <div key={o.step}>
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-2">{o.label}</h3>
+                    {/* Image Generation — show thumbnails */}
+                    {o.step === "image_generation" && output?.images && Array.isArray(output.images) ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {(output.images as { url: string; prompt: string; revised_prompt: string }[]).map((img, i) => (
+                            <div key={i} className="rounded-lg overflow-hidden border border-muted">
+                              <img src={img.url} alt={`Scene ${i + 1}`} className="w-full h-48 object-cover" />
+                              <p className="text-xs text-muted-foreground p-2 line-clamp-2">{img.revised_prompt || img.prompt}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{String(output.generated)} of {String(output.total_prompts)} images generated</p>
+                      </div>
+                    ) : o.step === "voiceover_generation" && output ? (
+                      /* Voiceover — show audio player if URL available */
+                      <div className="space-y-2">
+                        {typeof output.audio_url === "string" && (
+                          <audio controls className="w-full" src={output.audio_url}>
+                            Your browser does not support the audio element.
+                          </audio>
+                        )}
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span>Words: {String(output.word_count || "—")}</span>
+                          <span>Est. duration: {String(output.estimated_duration_minutes || "—")} min</span>
+                          <span>Voice: {String(output.voice_id || "—")}</span>
+                        </div>
+                        {!output.audio_url && typeof output.note === "string" && (
+                          <p className="text-xs text-yellow-500">{output.note}</p>
+                        )}
+                      </div>
+                    ) : o.step === "stock_footage" && output?.footage && Array.isArray(output.footage) ? (
+                      /* Stock Footage — show video links */
+                      <div className="space-y-2">
+                        {(output.footage as { query: string; videos: { url: string; duration: number }[] }[]).map((group, i) => (
+                          <div key={i}>
+                            <p className="text-xs font-medium text-muted-foreground mb-1">Search: &ldquo;{group.query}&rdquo;</p>
+                            <div className="flex gap-2 flex-wrap">
+                              {group.videos.map((v, j) => (
+                                <a key={j} href={v.url} target="_blank" rel="noopener noreferrer"
+                                  className="text-xs bg-muted px-2 py-1 rounded hover:bg-primary/20 transition-colors">
+                                  Video {j + 1} ({v.duration}s)
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : o.step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) ? (
+                      /* Hero Scenes — show video previews if available */
+                      <div className="space-y-2">
+                        {(output.scenes as { task_id: string; status: string; video_url?: string; image_url: string }[]).map((scene, i) => (
+                          <div key={i} className="flex items-center gap-3 p-2 bg-muted rounded-lg">
+                            <img src={scene.image_url} alt={`Hero ${i + 1}`} className="w-20 h-12 object-cover rounded" />
+                            <div className="flex-1">
+                              <p className="text-xs font-medium">Hero Scene {i + 1}</p>
+                              <p className="text-xs text-muted-foreground">Status: {scene.status}</p>
+                            </div>
+                            {scene.video_url && (
+                              <a href={scene.video_url} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-primary hover:underline">Watch</a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      /* Default — pre-formatted text */
+                      <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-64 overflow-y-auto">
+                        {o.text}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Completion Summary */}
+      {project.status === "completed" && (
+        <Card className="border-green-500/30">
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-500" /> Production Complete
+          </CardTitle>
+          <CardContent className="mt-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">Steps</p>
+                <p className="text-lg font-bold">{completedCount}/{STEPS.length}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total Cost</p>
+                <p className="text-lg font-bold">${(totalCost / 100).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total Duration</p>
+                <p className="text-lg font-bold">{Math.round(steps.reduce((sum, s) => sum + (s.duration_ms || 0), 0) / 1000)}s</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Assets</p>
+                <p className="text-lg font-bold">
+                  {steps.filter(s => ["image_generation", "voiceover_generation", "stock_footage", "hero_scenes"].includes(s.step) && s.status === "completed").length} generated
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
