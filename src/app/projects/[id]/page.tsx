@@ -16,6 +16,8 @@ import {
   SkipForward,
   AlertCircle,
   RefreshCw,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { Project, StepResult, StepStatus } from "@/types";
 
@@ -54,6 +56,14 @@ function statusIcon(status: StepStatus | "pending") {
   }
 }
 
+function formatStepOutput(output: Record<string, unknown>): string {
+  // Find the main text field in the output (research, script, hooks, etc.)
+  for (const val of Object.values(output)) {
+    if (typeof val === "string" && val.length > 50) return val;
+  }
+  return JSON.stringify(output, null, 2);
+}
+
 function statusVariant(status: string): "success" | "destructive" | "default" | "outline" {
   switch (status) {
     case "completed": return "success";
@@ -71,6 +81,7 @@ export default function ProjectDetailPage() {
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef(false);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
 
   const loadProject = useCallback(async () => {
     try {
@@ -231,25 +242,40 @@ export default function ProjectDetailPage() {
           {PRE_PROD_STEPS.map((def) => {
             const stepData = steps.find(s => s.step === def.id);
             const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
+            const isExpanded = expandedStep === def.id;
             return (
-              <div key={def.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted">
-                {statusIcon(status)}
-                <span className="text-sm font-medium flex-1">
-                  <span className="text-muted-foreground mr-2">{def.order}.</span>
-                  {def.label}
-                </span>
-                {stepData?.duration_ms && stepData.duration_ms > 0 && (
-                  <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+              <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
+                <div
+                  className={`flex items-center gap-3 p-3 ${hasOutput ? "cursor-pointer hover:bg-muted/80" : ""}`}
+                  onClick={() => hasOutput && setExpandedStep(isExpanded ? null : def.id)}
+                >
+                  {statusIcon(status)}
+                  {hasOutput && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
+                  <span className="text-sm font-medium flex-1">
+                    <span className="text-muted-foreground mr-2">{def.order}.</span>
+                    {def.label}
+                  </span>
+                  {stepData?.duration_ms && stepData.duration_ms > 0 && (
+                    <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+                  )}
+                  {stepData?.cost_cents && stepData.cost_cents > 0 && (
+                    <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
+                  )}
+                  {status === "failed" && !running && (
+                    <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); runStep(def.id); }}>
+                      <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                    </Button>
+                  )}
+                  <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
+                </div>
+                {isExpanded && hasOutput && (
+                  <div className="px-3 pb-3">
+                    <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
+                      {formatStepOutput(stepData!.output!)}
+                    </pre>
+                  </div>
                 )}
-                {stepData?.cost_cents && stepData.cost_cents > 0 && (
-                  <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
-                )}
-                {status === "failed" && !running && (
-                  <Button variant="ghost" size="sm" onClick={() => runStep(def.id)}>
-                    <RefreshCw className="h-3 w-3 mr-1" /> Retry
-                  </Button>
-                )}
-                <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
               </div>
             );
           })}
@@ -266,25 +292,40 @@ export default function ProjectDetailPage() {
           {PROD_STEPS.map((def) => {
             const stepData = steps.find(s => s.step === def.id);
             const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
+            const hasOutput = stepData?.output && Object.keys(stepData.output).length > 0;
+            const isExpanded = expandedStep === def.id;
             return (
-              <div key={def.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted">
-                {statusIcon(status)}
-                <span className="text-sm font-medium flex-1">
-                  <span className="text-muted-foreground mr-2">{def.order}.</span>
-                  {def.label}
-                </span>
-                {stepData?.duration_ms && stepData.duration_ms > 0 && (
-                  <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+              <div key={def.id} className="rounded-lg bg-muted overflow-hidden">
+                <div
+                  className={`flex items-center gap-3 p-3 ${hasOutput ? "cursor-pointer hover:bg-muted/80" : ""}`}
+                  onClick={() => hasOutput && setExpandedStep(isExpanded ? null : def.id)}
+                >
+                  {statusIcon(status)}
+                  {hasOutput && (isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
+                  <span className="text-sm font-medium flex-1">
+                    <span className="text-muted-foreground mr-2">{def.order}.</span>
+                    {def.label}
+                  </span>
+                  {stepData?.duration_ms && stepData.duration_ms > 0 && (
+                    <span className="text-xs text-muted-foreground">{(stepData.duration_ms / 1000).toFixed(1)}s</span>
+                  )}
+                  {stepData?.cost_cents && stepData.cost_cents > 0 && (
+                    <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
+                  )}
+                  {status === "failed" && !running && (
+                    <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); runStep(def.id); }}>
+                      <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                    </Button>
+                  )}
+                  <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
+                </div>
+                {isExpanded && hasOutput && (
+                  <div className="px-3 pb-3">
+                    <pre className="whitespace-pre-wrap text-xs bg-background p-3 rounded-lg max-h-64 overflow-y-auto">
+                      {formatStepOutput(stepData!.output!)}
+                    </pre>
+                  </div>
                 )}
-                {stepData?.cost_cents && stepData.cost_cents > 0 && (
-                  <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
-                )}
-                {status === "failed" && !running && (
-                  <Button variant="ghost" size="sm" onClick={() => runStep(def.id)}>
-                    <RefreshCw className="h-3 w-3 mr-1" /> Retry
-                  </Button>
-                )}
-                <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
               </div>
             );
           })}

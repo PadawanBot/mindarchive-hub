@@ -11,7 +11,7 @@ export async function generateWithClaude(
   systemPrompt: string,
   userPrompt: string,
   maxTokens: number = 4096,
-  timeoutMs: number = 50_000
+  timeoutMs: number = 40_000
 ): Promise<{ text: string; inputTokens: number; outputTokens: number; truncated?: boolean }> {
   const client = new Anthropic({ apiKey });
 
