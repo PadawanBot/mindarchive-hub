@@ -208,6 +208,18 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
+      {/* Debug: step output availability */}
+      {steps.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Steps with output: {steps.filter(s => s.output && Object.keys(s.output).length > 0).length}/{steps.length}
+          {steps.filter(s => s.status === "completed" && (!s.output || Object.keys(s.output).length === 0)).length > 0 && (
+            <span className="text-yellow-500 ml-2">
+              (missing output: {steps.filter(s => s.status === "completed" && (!s.output || Object.keys(s.output).length === 0)).map(s => s.step).join(", ")})
+            </span>
+          )}
+        </p>
+      )}
+
       {/* Progress bar */}
       <div className="flex items-center gap-3">
         <div className="flex-1 bg-muted rounded-full h-2">
