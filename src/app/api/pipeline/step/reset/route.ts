@@ -1,21 +1,38 @@
 import { NextResponse } from "next/server";
 import { getById, update, upsertStep } from "@/lib/store";
-import { getStepDef } from "@/lib/pipeline/steps";
+import { getStepDef, getDependents } from "@/lib/pipeline/steps";
 import type { Project, PipelineStep } from "@/types";
 
 export async function POST(request: Request) {
   try {
-    const { project_id, steps: stepIds } = await request.json();
+    const { project_id, steps: stepIds, cascade } = await request.json();
 
     const project = await getById<Project>("projects", project_id);
     if (!project) {
       return NextResponse.json({ success: false, error: "Project not found" }, { status: 404 });
     }
 
+    // Build full list of steps to reset (optionally including dependents)
+    let allStepIds = [...stepIds] as PipelineStep[];
+    if (cascade) {
+      for (const stepId of stepIds) {
+        const deps = getDependents(stepId as PipelineStep);
+        for (const d of deps) {
+          if (!allStepIds.includes(d)) allStepIds.push(d);
+        }
+      }
+    }
+
     const reset: string[] = [];
-    for (const stepId of stepIds) {
+    let hasPreProd = false;
+    let hasProd = false;
+
+    for (const stepId of allStepIds) {
       const stepDef = getStepDef(stepId as PipelineStep);
       if (!stepDef) continue;
+      if (stepDef.phase === "pre_production") hasPreProd = true;
+      if (stepDef.phase === "production") hasProd = true;
+
       await upsertStep(project_id, stepId, {
         status: "pending",
         output: undefined,
@@ -28,9 +45,10 @@ export async function POST(request: Request) {
       reset.push(stepId);
     }
 
-    // Set project back to production phase
+    // Set project status appropriately
+    const newStatus = hasPreProd ? "pre_production" : "production";
     await update<Project>("projects", project_id, {
-      status: "production",
+      status: newStatus,
     } as Partial<Project>);
 
     return NextResponse.json({ success: true, data: { reset } });

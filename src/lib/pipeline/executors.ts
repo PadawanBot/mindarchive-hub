@@ -3,6 +3,7 @@ import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
 import { generateImage } from "@/lib/providers/openai";
 import { generateVoiceover } from "@/lib/providers/elevenlabs";
+import { downloadAndStore } from "@/lib/storage";
 import { searchVideos } from "@/lib/providers/pexels";
 
 // ─── Context passed to every executor ───
@@ -304,15 +305,22 @@ const image_generation: StepExecutor = async (ctx) => {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Generate 1 image to fit within Vercel 60s limit (DALL-E takes ~15-20s per image)
-  // Additional images can be generated in a future batch step
-  const images: { prompt: string; url: string; revised_prompt: string }[] = [];
-  try {
-    const img = await generateImage(key, prompts[0]);
-    images.push({ prompt: prompts[0], url: img.url, revised_prompt: img.revisedPrompt });
-  } catch (err) {
-    return { output: { status: "completed", images: [], error: String(err), total_prompts: prompts.length, generated: 0 }, cost_cents: 0 };
-  }
+  // Generate up to 3 images in parallel (DALL-E takes ~15-20s each, parallel ≈ 20s total)
+  const maxImages = Math.min(prompts.length, 3);
+  const imagePromises = prompts.slice(0, maxImages).map(async (p, i) => {
+    try {
+      const img = await generateImage(key, p);
+      // Persist to Supabase Storage so URLs don't expire
+      const storedUrl = await downloadAndStore(
+        ctx.project.id, `dalle-scene-${i + 1}.png`, img.url, "image/png"
+      );
+      return { prompt: p, url: storedUrl || img.url, revised_prompt: img.revisedPrompt, stored: !!storedUrl };
+    } catch {
+      return null;
+    }
+  });
+  const results = await Promise.all(imagePromises);
+  const images = results.filter(Boolean) as { prompt: string; url: string; revised_prompt: string; stored: boolean }[];
 
   return {
     output: { status: "completed", images, total_prompts: prompts.length, generated: images.length },

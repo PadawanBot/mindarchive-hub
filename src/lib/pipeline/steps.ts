@@ -226,3 +226,24 @@ export function canRunStep(
   if (!def) return false;
   return def.dependsOn.every((dep) => completedSteps.has(dep));
 }
+
+/** Get all steps from a given order onward (inclusive). */
+export function getStepsFromOrder(order: number): StepDefinition[] {
+  return PIPELINE_STEPS.filter((s) => s.order >= order).sort((a, b) => a.order - b.order);
+}
+
+/** Get all steps that transitively depend on the given step. */
+export function getDependents(stepId: PipelineStep): PipelineStep[] {
+  const dependents: PipelineStep[] = [];
+  const queue = [stepId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const step of PIPELINE_STEPS) {
+      if (step.dependsOn.includes(current) && !dependents.includes(step.id)) {
+        dependents.push(step.id);
+        queue.push(step.id);
+      }
+    }
+  }
+  return dependents;
+}

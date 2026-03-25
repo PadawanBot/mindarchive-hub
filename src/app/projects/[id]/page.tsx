@@ -80,12 +80,15 @@ function statusVariant(status: string): "success" | "destructive" | "default" | 
   }
 }
 
-function StepRow({ def, stepData, currentStep, running, onRetry }: {
+function StepRow({ def, stepData, currentStep, running, onRetry, onRunFrom, onRunSingle, canRunSingle }: {
   def: typeof STEPS[0];
   stepData?: StepResult;
   currentStep: string | null;
   running: boolean;
   onRetry: (id: string) => void;
+  onRunFrom: (id: string) => void;
+  onRunSingle: (id: string) => void;
+  canRunSingle: boolean;
 }) {
   const status: StepStatus = currentStep === def.id ? "running" : (stepData?.status || "pending");
   return (
@@ -102,8 +105,18 @@ function StepRow({ def, stepData, currentStep, running, onRetry }: {
         <span className="text-xs text-muted-foreground">${(stepData.cost_cents / 100).toFixed(3)}</span>
       )}
       {status === "failed" && !running && (
-        <Button variant="ghost" size="sm" onClick={() => onRetry(def.id)}>
+        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRetry(def.id); }}>
           <RefreshCw className="h-3 w-3 mr-1" /> Retry
+        </Button>
+      )}
+      {!running && status === "completed" && (
+        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunFrom(def.id); }}>
+          <RefreshCw className="h-3 w-3 mr-1" /> Run from here
+        </Button>
+      )}
+      {!running && canRunSingle && status !== "completed" && status !== "failed" && (
+        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunSingle(def.id); }}>
+          <Play className="h-3 w-3 mr-1" /> Run
         </Button>
       )}
       <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
@@ -318,6 +331,57 @@ export default function ProjectDetailPage() {
     await loadProject();
   };
 
+  const runFromStep = async (stepId: string) => {
+    setRunning(true);
+    setError(null);
+    abortRef.current = false;
+
+    // Find the starting step and collect all steps from it onward
+    const startOrder = STEPS.find(s => s.id === stepId)?.order ?? 1;
+    const stepsFromHere = STEPS.filter(s => s.order >= startOrder);
+    const stepIds = stepsFromHere.map(s => s.id);
+
+    // Reset those steps back to pending
+    try {
+      const res = await fetch("/api/pipeline/step/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: params.id, steps: stepIds }),
+      });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Failed to reset steps"); setRunning(false); return; }
+    } catch (err) { setError(String(err)); setRunning(false); return; }
+
+    await loadSteps();
+
+    // Run only those steps
+    for (const step of stepsFromHere) {
+      if (abortRef.current) break;
+      const ok = await runStep(step.id);
+      if (!ok) break;
+    }
+
+    setCurrentStep(null);
+    setRunning(false);
+    await loadProject();
+  };
+
+  const runSingleStep = async (stepId: string) => {
+    setRunning(true);
+    setError(null);
+    abortRef.current = false;
+
+    const ok = await runStep(stepId);
+    if (!ok) {
+      // Step failed — error already set by runStep
+    }
+
+    setCurrentStep(null);
+    setRunning(false);
+    await loadSteps();
+    await loadProject();
+  };
+
   const stopPipeline = () => {
     abortRef.current = true;
   };
@@ -329,6 +393,15 @@ export default function ProjectDetailPage() {
       </div>
     );
   }
+
+  // Check if a step's dependencies (all prior steps by order) are completed
+  const canRunSingle = (stepDef: typeof STEPS[0]): boolean => {
+    const priorSteps = STEPS.filter(s => s.order < stepDef.order);
+    return priorSteps.every(prior => {
+      const data = steps.find(s => s.step === prior.id);
+      return data?.status === "completed" || data?.status === "skipped";
+    });
+  };
 
   const completedCount = steps.filter(s => s.status === "completed" || s.status === "skipped").length;
   const totalCost = steps.reduce((sum, s) => sum + (s.cost_cents || 0), 0);
@@ -367,7 +440,15 @@ export default function ProjectDetailPage() {
           </div>
           <p className="text-muted-foreground mt-1">{project.topic}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {completedCount > 0 && (
+            <div className="flex items-center gap-1 mr-2">
+              <span className="text-xs text-muted-foreground">Export:</span>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => window.open(`/api/export?project_id=${params.id}&format=md`, '_blank')}>MD</Button>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => window.open(`/api/export?project_id=${params.id}&format=txt`, '_blank')}>TXT</Button>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => window.open(`/api/export?project_id=${params.id}&format=json`, '_blank')}>JSON</Button>
+            </div>
+          )}
           {running ? (
             <Button variant="outline" onClick={stopPipeline}>
               <XCircle className="h-4 w-4 mr-2" /> Stop
@@ -427,6 +508,9 @@ export default function ProjectDetailPage() {
               currentStep={currentStep}
               running={running}
               onRetry={runStep}
+              onRunFrom={runFromStep}
+              onRunSingle={runSingleStep}
+              canRunSingle={canRunSingle(def)}
             />
           ))}
         </CardContent>
@@ -447,6 +531,9 @@ export default function ProjectDetailPage() {
               currentStep={currentStep}
               running={running}
               onRetry={runStep}
+              onRunFrom={runFromStep}
+              onRunSingle={runSingleStep}
+              canRunSingle={canRunSingle(def)}
             />
           ))}
         </CardContent>
