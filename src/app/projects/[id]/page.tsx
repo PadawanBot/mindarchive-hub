@@ -337,15 +337,16 @@ export default function ProjectDetailPage() {
     loadSteps();
   }, [loadProject, loadSteps]);
 
-  const runStep = async (stepId: string): Promise<boolean> => {
+  const runStep = async (stepId: string, opts?: { force?: boolean }): Promise<boolean> => {
     setCurrentStep(stepId);
     setError(null);
+    const force = opts?.force || false;
     try {
       // Phase 1: Prepare — validate, mark running, get prompt
       const prepRes = await fetch("/api/pipeline/step/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: params.id, step: stepId }),
+        body: JSON.stringify({ project_id: params.id, step: stepId, force }),
       });
       const prepText = await prepRes.text();
       if (!prepText) { setError(`Empty response preparing step ${stepId}`); return false; }
@@ -367,7 +368,7 @@ export default function ProjectDetailPage() {
         const res = await fetch("/api/pipeline/step", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project_id: params.id, step: stepId }),
+          body: JSON.stringify({ project_id: params.id, step: stepId, force }),
         });
         const text = await res.text();
         if (!text) { setError(`Empty response for step ${stepId}`); return false; }
@@ -554,7 +555,7 @@ export default function ProjectDetailPage() {
     setError(null);
     abortRef.current = false;
 
-    const ok = await runStep(stepId);
+    const ok = await runStep(stepId, { force: true });
     if (!ok) {
       // Step failed — error already set by runStep
     }

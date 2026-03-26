@@ -8,7 +8,7 @@ export const maxDuration = 15;
 
 export async function POST(request: Request) {
   try {
-    const { project_id, step } = await request.json();
+    const { project_id, step, force } = await request.json();
 
     const stepDef = getStepDef(step as PipelineStep);
     if (!stepDef) {
@@ -22,14 +22,16 @@ export async function POST(request: Request) {
 
     const existingSteps = await getStepsByProject(project_id);
 
-    // Idempotent — already completed
-    const existing = existingSteps.find(s => s.step === step && s.status === "completed");
-    if (existing) {
-      const next = getNextStep(step as PipelineStep);
-      return NextResponse.json({
-        success: true,
-        data: { already_completed: true, step_result: existing, next_step: next?.id || null },
-      });
+    // Idempotent — already completed (skip unless force re-run)
+    if (!force) {
+      const existing = existingSteps.find(s => s.step === step && s.status === "completed");
+      if (existing) {
+        const next = getNextStep(step as PipelineStep);
+        return NextResponse.json({
+          success: true,
+          data: { already_completed: true, step_result: existing, next_step: next?.id || null },
+        });
+      }
     }
 
     // Dependency check

@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
-    const { project_id, step } = await request.json();
+    const { project_id, step, force } = await request.json();
 
     // Validate step
     const stepDef = getStepDef(step as PipelineStep);
@@ -25,14 +25,16 @@ export async function POST(request: Request) {
     // Load existing steps
     const existingSteps = await getStepsByProject(project_id);
 
-    // Check if already completed (idempotent)
-    const existing = existingSteps.find(s => s.step === step && s.status === "completed");
-    if (existing) {
-      const next = getNextStep(step as PipelineStep);
-      return NextResponse.json({
-        success: true,
-        data: { step_result: existing, next_step: next?.id || null, already_completed: true },
-      });
+    // Check if already completed (idempotent — skip unless force re-run)
+    if (!force) {
+      const existing = existingSteps.find(s => s.step === step && s.status === "completed");
+      if (existing) {
+        const next = getNextStep(step as PipelineStep);
+        return NextResponse.json({
+          success: true,
+          data: { step_result: existing, next_step: next?.id || null, already_completed: true },
+        });
+      }
     }
 
     // Check dependencies
