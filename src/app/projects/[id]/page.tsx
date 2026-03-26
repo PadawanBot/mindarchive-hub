@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useVideoAssembler } from "@/lib/video/assembler";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
@@ -133,8 +134,7 @@ export default function ProjectDetailPage() {
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [assemblyJobId, setAssemblyJobId] = useState<string | null>(null);
-  const [assemblyStatus, setAssemblyStatus] = useState<string | null>(null);
+  const { assemble, assembling, progress: assemblyProgress, error: assemblyError } = useVideoAssembler();
   const abortRef = useRef(false);
 
   const loadProject = useCallback(async () => {
@@ -391,39 +391,47 @@ export default function ProjectDetailPage() {
   };
 
   const assembleVideo = async () => {
-    setError(null);
-    setAssemblyStatus("starting");
-    try {
-      const res = await fetch("/api/pipeline/assemble", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: params.id }),
-      });
-      const data = await res.json();
-      if (!data.success) { setError(data.error); setAssemblyStatus(null); return; }
-      setAssemblyJobId(data.data.jobId);
-      setAssemblyStatus("queued");
+    // Gather assets from completed steps
+    const voiceoverStep = steps.find(s => s.step === "voiceover_generation" && s.status === "completed");
+    const imageStep = steps.find(s => s.step === "image_generation" && s.status === "completed");
+    const timingStep = steps.find(s => s.step === "timing_sync" && s.status === "completed");
 
-      // Poll worker for status
-      const workerUrl = data.data.workerUrl;
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`${workerUrl}/status/${data.data.jobId}`);
-          const statusData = await statusRes.json();
-          setAssemblyStatus(statusData.status);
-          if (statusData.status === "completed") {
-            clearInterval(pollInterval);
-            await loadProject();
-          } else if (statusData.status === "failed") {
-            clearInterval(pollInterval);
-            setError(`Assembly failed: ${statusData.error}`);
-          }
-        } catch {}
-      }, 5000);
-    } catch (err) {
-      setError(String(err));
-      setAssemblyStatus(null);
+    const audioUrl = (voiceoverStep?.output as Record<string, unknown>)?.audio_url as string | undefined;
+    if (!audioUrl) {
+      setError("Voiceover audio not available. Re-run Voiceover Generation step first (it needs to save the MP3 to storage).");
+      return;
     }
+
+    // Get images
+    const images = ((imageStep?.output as Record<string, unknown>)?.images as { url: string }[]) || [];
+    if (images.length === 0) {
+      setError("No images available. Re-run Image Generation step first.");
+      return;
+    }
+
+    // Calculate scene durations from timing data or distribute evenly
+    let sceneDurations: number[] = [];
+    try {
+      const timingText = (timingStep?.output as Record<string, unknown>)?.timing as string;
+      if (timingText) {
+        const parsed = JSON.parse(timingText);
+        if (Array.isArray(parsed)) {
+          sceneDurations = parsed.map((t: { start_time_seconds: number; end_time_seconds: number }) =>
+            t.end_time_seconds - t.start_time_seconds
+          );
+        }
+      }
+    } catch {}
+
+    // Build scenes — map images to timing segments
+    const voiceoverDuration = ((voiceoverStep?.output as Record<string, unknown>)?.estimated_duration_minutes as number || 7) * 60;
+    const scenes = images.map((img, i) => ({
+      imageUrl: img.url,
+      duration: sceneDurations[i] || Math.round(voiceoverDuration / images.length),
+    }));
+
+    const slug = project?.title?.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "video";
+    await assemble(audioUrl, scenes, `${slug}.mp4`);
   };
 
   if (!project) {
@@ -725,36 +733,42 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
-            {/* Assemble Video / Video Player */}
+            {/* Assemble Video */}
             <div className="mt-4 pt-4 border-t border-muted">
-              {project.output_url ? (
-                <div className="space-y-3">
-                  <h4 className="text-sm font-semibold text-green-400">Final Video Ready</h4>
-                  <video controls className="w-full rounded-lg" src={project.output_url}>
-                    Your browser does not support the video element.
-                  </video>
-                  <a href={project.output_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-                    <Download className="h-4 w-4" /> Download MP4
-                  </a>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <Button
-                    onClick={assembleVideo}
-                    disabled={!!assemblyStatus}
-                    variant="outline"
-                  >
-                    {assemblyStatus ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {assemblyStatus}</>
-                    ) : (
-                      <><Play className="h-4 w-4 mr-2" /> Assemble Video</>
-                    )}
-                  </Button>
-                  {!assemblyStatus && (
-                    <span className="text-xs text-muted-foreground">Requires Railway worker (WORKER_URL env var)</span>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={assembleVideo}
+                  disabled={assembling}
+                  variant="outline"
+                >
+                  {assembling ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {assemblyProgress.stage}</>
+                  ) : (
+                    <><Play className="h-4 w-4 mr-2" /> Assemble Video</>
+                  )}
+                </Button>
+                {!assembling && (
+                  <span className="text-xs text-muted-foreground">Renders in your browser using ffmpeg.wasm — no server needed</span>
+                )}
+              </div>
+              {assembling && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 bg-muted rounded-full h-2">
+                      <div
+                        className="bg-primary h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${assemblyProgress.percent}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground">{assemblyProgress.percent}%</span>
+                  </div>
+                  {assemblyProgress.detail && (
+                    <p className="text-xs text-muted-foreground">{assemblyProgress.detail}</p>
                   )}
                 </div>
+              )}
+              {assemblyError && (
+                <p className="text-xs text-red-400 mt-2">{assemblyError}</p>
               )}
             </div>
           </CardContent>
