@@ -116,9 +116,14 @@ function StepRow({ def, stepData, currentStep, running, onRetry, onRunFrom, onRu
         </Button>
       )}
       {!running && status === "completed" && (
-        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunFrom(def.id); }}>
-          <RefreshCw className="h-3 w-3 mr-1" /> Run from here
-        </Button>
+        <>
+          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunSingle(def.id); }}>
+            <RefreshCw className="h-3 w-3 mr-1" /> Re-run
+          </Button>
+          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunFrom(def.id); }}>
+            <Play className="h-3 w-3 mr-1" /> Run from here
+          </Button>
+        </>
       )}
       {!running && canRunSingle && status !== "completed" && status !== "failed" && (
         <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRunSingle(def.id); }}>
