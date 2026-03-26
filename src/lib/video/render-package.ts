@@ -143,6 +143,19 @@ export async function downloadRenderPackage(
     }
   }
 
+  // Check hero_scenes for Runway video clips
+  const heroScenes = getOutput("hero_scenes");
+  if (heroScenes?.scenes && Array.isArray(heroScenes.scenes)) {
+    const heroWithVideo = (heroScenes.scenes as { video_url?: string; taskId?: string }[])
+      .filter(s => s.video_url);
+    // Map Runway clips to early scenes (these are hero/key moments)
+    for (let i = 0; i < heroWithVideo.length && i < timing.length; i++) {
+      // Override the first N scenes with Runway video clips
+      timing[i].tag_type = "RUNWAY";
+      timing[i].asset_file = `runway/hero_${i + 1}.mp4`;
+    }
+  }
+
   // Add end card
   timing.push({
     scene: timing.length + 1,
@@ -181,8 +194,27 @@ export async function downloadRenderPackage(
   }));
   stockFolder.file("stock_manifest.json", JSON.stringify(stockManifest, null, 2));
 
+  // ── Download Runway hero scene videos ──
+  const runwayFolder = zip.folder("runway")!;
+  if (heroScenes?.scenes && Array.isArray(heroScenes.scenes)) {
+    for (let i = 0; i < (heroScenes.scenes as { video_url?: string }[]).length; i++) {
+      const scene = (heroScenes.scenes as { video_url?: string }[])[i];
+      if (scene.video_url) {
+        report(`Downloading Runway clip ${i + 1}`, 50 + i * 5);
+        try {
+          const res = await fetch(scene.video_url);
+          if (res.ok) {
+            const blob = await res.blob();
+            runwayFolder.file(`hero_${i + 1}.mp4`, blob);
+          }
+        } catch {
+          console.warn(`Failed to download Runway clip ${i + 1}`);
+        }
+      }
+    }
+  }
+
   // ── Create empty folders for assets the user needs to add ──
-  zip.folder("runway");
   zip.folder("graphics");
 
   // ── Add voiceover reference ──
