@@ -19,6 +19,9 @@ interface StepOutputRendererProps {
 }
 
 export function StepOutputRenderer({ step, label, text, output, projectId, onOutputChanged }: StepOutputRendererProps) {
+  // Stock footage handles its own asset slots internally — no separate AssetGrid needed
+  const showSeparateAssetGrid = step !== "stock_footage" && output && getSlotsForStep(step).length > 0;
+
   return (
     <div>
       <h3 className="text-sm font-semibold text-muted-foreground mb-2">{label}</h3>
@@ -30,8 +33,8 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
         /* Voiceover — show audio player if URL available */
         <AudioPlayer output={output} />
       ) : step === "stock_footage" && output?.footage && Array.isArray(output.footage) ? (
-        /* Stock Footage — show video thumbnails and links */
-        <StockFootageGrid output={output} />
+        /* Stock Footage — unified search results + slot management */
+        <StockFootageGrid output={output} projectId={projectId} onOutputChanged={onOutputChanged} />
       ) : step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) ? (
         /* Hero Scenes — show video previews with Runway polling */
         <HeroScenesViewer
@@ -45,8 +48,8 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
         <TextOutput text={text} />
       )}
 
-      {/* Asset management grid — shows upload/replace slots for asset-producing steps */}
-      {output && getSlotsForStep(step).length > 0 && (
+      {/* Asset management grid — for non-stock-footage asset-producing steps */}
+      {showSeparateAssetGrid && (
         <div className="mt-3 pt-3 border-t border-muted-foreground/10">
           <AssetGrid
             projectId={projectId}
