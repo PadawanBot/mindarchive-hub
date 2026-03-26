@@ -32,6 +32,13 @@ export default function ProfileDetailPage() {
   const updateField = (key: string, value: string) =>
     setProfile((prev) => (prev ? { ...prev, [key]: value } : null));
 
+  const toggleAssetSource = (key: string, checked: boolean) =>
+    setProfile((prev) => {
+      if (!prev) return null;
+      const current = prev.asset_sources || { dalle_images: true, stock_footage: true, hero_scenes: true };
+      return { ...prev, asset_sources: { ...current, [key]: checked } };
+    });
+
   const handleSave = async () => {
     if (!profile) return;
     setSaving(true);
@@ -157,6 +164,39 @@ export default function ProfileDetailPage() {
               <label className="text-sm font-medium">Voice ID</label>
               <Input value={profile.voice_id} onChange={(e) => updateField("voice_id", e.target.value)} />
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardTitle>Default Asset Sources</CardTitle>
+        <CardContent className="mt-4 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Choose which asset types to enable by default for projects on this channel.
+            You can override per-project.
+          </p>
+          <div className="space-y-3">
+            {([
+              { key: "dalle_images", label: "DALL-E Images", desc: "AI-generated scene images via OpenAI DALL-E 3" },
+              { key: "stock_footage", label: "Stock Footage", desc: "Atmospheric B-roll video clips from Pexels" },
+              { key: "hero_scenes", label: "Hero Scenes", desc: "AI-generated video scenes via Runway ML" },
+            ] as const).map(({ key, label, desc }) => {
+              const sources = profile.asset_sources || { dalle_images: true, stock_footage: true, hero_scenes: true };
+              return (
+                <label key={key} className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={sources[key] !== false}
+                    onChange={(e) => toggleAssetSource(key, e.target.checked)}
+                    className="mt-0.5 rounded border-muted-foreground/30"
+                  />
+                  <div>
+                    <span className="text-sm font-medium">{label}</span>
+                    <p className="text-xs text-muted-foreground">{desc}</p>
+                  </div>
+                </label>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

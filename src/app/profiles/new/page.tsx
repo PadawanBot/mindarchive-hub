@@ -24,6 +24,11 @@ export default function NewProfilePage() {
     image_provider: "dalle",
     voice_provider: "elevenlabs",
     voice_id: "",
+    asset_sources: {
+      dalle_images: true,
+      stock_footage: true,
+      hero_scenes: true,
+    },
   });
 
   const updateField = (key: string, value: string) =>
@@ -181,6 +186,42 @@ export default function NewProfilePage() {
               <p className="text-xs text-muted-foreground">
                 Find voice IDs at elevenlabs.io → Voices → Click voice → ID
               </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Default Asset Sources */}
+        <Card>
+          <CardTitle>Default Asset Sources</CardTitle>
+          <CardContent className="mt-4 space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Choose which asset types to enable by default for projects on this channel.
+              You can override per-project.
+            </p>
+            <div className="space-y-3">
+              {([
+                { key: "dalle_images", label: "DALL-E Images", desc: "AI-generated scene images via OpenAI DALL-E 3" },
+                { key: "stock_footage", label: "Stock Footage", desc: "Atmospheric B-roll video clips from Pexels" },
+                { key: "hero_scenes", label: "Hero Scenes", desc: "AI-generated video scenes via Runway ML" },
+              ] as const).map(({ key, label, desc }) => (
+                <label key={key} className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.asset_sources[key]}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        asset_sources: { ...prev.asset_sources, [key]: e.target.checked },
+                      }))
+                    }
+                    className="mt-0.5 rounded border-muted-foreground/30"
+                  />
+                  <div>
+                    <span className="text-sm font-medium">{label}</span>
+                    <p className="text-xs text-muted-foreground">{desc}</p>
+                  </div>
+                </label>
+              ))}
             </div>
           </CardContent>
         </Card>
