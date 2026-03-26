@@ -128,6 +128,83 @@ function StepRow({ def, stepData, currentStep, running, onRetry, onRunFrom, onRu
   );
 }
 
+function HeroScenesViewer({ scenes, skipped, reason }: {
+  scenes: { task_id?: string; taskId?: string; status?: string; video_url?: string; image_url?: string; imageUrl?: string; prompt?: string; promptText?: string }[];
+  skipped?: boolean;
+  reason?: string;
+}) {
+  const [sceneStatuses, setSceneStatuses] = useState<Record<number, { status: string; videoUrl?: string }>>({});
+  const [polling, setPolling] = useState(false);
+
+  const checkStatus = async () => {
+    setPolling(true);
+    for (let i = 0; i < scenes.length; i++) {
+      const taskId = scenes[i].task_id || scenes[i].taskId;
+      if (!taskId || taskId.startsWith("error:")) continue;
+      try {
+        const res = await fetch(`/api/pipeline/runway/status?task_id=${taskId}`);
+        const data = await res.json();
+        if (data.success) {
+          setSceneStatuses(prev => ({
+            ...prev,
+            [i]: { status: data.data.status, videoUrl: data.data.outputUrl },
+          }));
+        }
+      } catch {}
+    }
+    setPolling(false);
+  };
+
+  const hasTaskIds = scenes.some(s => (s.task_id || s.taskId) && !(s.task_id || s.taskId)?.startsWith("error:"));
+
+  return (
+    <div className="space-y-2">
+      {scenes.map((scene, i) => {
+        const taskId = scene.task_id || scene.taskId;
+        const imgUrl = scene.image_url || scene.imageUrl;
+        const prompt = scene.prompt || scene.promptText;
+        const polledStatus = sceneStatuses[i];
+        const videoUrl = polledStatus?.videoUrl || scene.video_url;
+        const status = polledStatus?.status || scene.status || (taskId ? "PENDING" : "no task");
+
+        return (
+          <div key={i} className="flex items-center gap-3 p-2 bg-muted rounded-lg">
+            {imgUrl ? (
+              <img src={imgUrl} alt={`Hero ${i + 1}`} className="w-20 h-12 object-cover rounded"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            ) : (
+              <div className="w-20 h-12 bg-background rounded flex items-center justify-center text-xs text-muted-foreground">No img</div>
+            )}
+            <div className="flex-1">
+              <p className="text-xs font-medium">Hero Scene {i + 1}</p>
+              <p className="text-xs text-muted-foreground">
+                {taskId && !taskId.startsWith("error:")
+                  ? `Status: ${status}`
+                  : taskId?.startsWith("error:")
+                    ? `Error: ${taskId.replace("error: ", "")}`
+                    : "No Runway task started"}
+              </p>
+              {prompt && <p className="text-xs text-muted-foreground/70 line-clamp-1">{prompt}</p>}
+            </div>
+            {videoUrl ? (
+              <a href={videoUrl} target="_blank" rel="noopener noreferrer"
+                className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded hover:opacity-80">Watch</a>
+            ) : status === "SUCCEEDED" ? (
+              <span className="text-xs text-green-500">Ready</span>
+            ) : null}
+          </div>
+        );
+      })}
+      {hasTaskIds && (
+        <Button variant="outline" size="sm" onClick={checkStatus} disabled={polling} className="mt-2">
+          {polling ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Checking...</> : <><RefreshCw className="h-3 w-3 mr-1" /> Check Runway Status</>}
+        </Button>
+      )}
+      {skipped && reason && <p className="text-xs text-yellow-500">{reason}</p>}
+    </div>
+  );
+}
+
 export default function ProjectDetailPage() {
   const params = useParams();
   const [project, setProject] = useState<Project | null>(null);
@@ -679,37 +756,8 @@ export default function ProjectDetailPage() {
                         ))}
                       </div>
                     ) : o.step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) ? (
-                      /* Hero Scenes — show video previews if available */
-                      <div className="space-y-2">
-                        {(output.scenes as { task_id?: string; status?: string; video_url?: string; image_url?: string; prompt?: string }[]).map((scene, i) => (
-                          <div key={i} className="flex items-center gap-3 p-2 bg-muted rounded-lg">
-                            {scene.image_url ? (
-                              <img
-                                src={scene.image_url}
-                                alt={`Hero ${i + 1}`}
-                                className="w-20 h-12 object-cover rounded"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                              />
-                            ) : (
-                              <div className="w-20 h-12 bg-background rounded flex items-center justify-center text-xs text-muted-foreground">No img</div>
-                            )}
-                            <div className="flex-1">
-                              <p className="text-xs font-medium">Hero Scene {i + 1}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {scene.task_id ? `Runway task: ${scene.status || "pending"}` : "No Runway key — skipped video generation"}
-                              </p>
-                              {scene.prompt && <p className="text-xs text-muted-foreground line-clamp-1">{scene.prompt}</p>}
-                            </div>
-                            {scene.video_url && (
-                              <a href={scene.video_url} target="_blank" rel="noopener noreferrer"
-                                className="text-xs text-primary hover:underline">Watch</a>
-                            )}
-                          </div>
-                        ))}
-                        {output.status === "skipped" && typeof output.reason === "string" && (
-                          <p className="text-xs text-yellow-500">{output.reason}</p>
-                        )}
-                      </div>
+                      /* Hero Scenes — show video previews with Runway polling */
+                      <HeroScenesViewer scenes={output.scenes as { task_id?: string; taskId?: string; status?: string; video_url?: string; image_url?: string; imageUrl?: string; prompt?: string; promptText?: string }[]} skipped={output.status === "skipped"} reason={typeof output.reason === "string" ? output.reason : undefined} />
                     ) : (
                       /* Default — pre-formatted text */
                       <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-64 overflow-y-auto">
