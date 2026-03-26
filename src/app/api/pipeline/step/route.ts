@@ -3,6 +3,7 @@ import { getById, update, getAllSettings, upsertStep, getStepsByProject } from "
 import { executors } from "@/lib/pipeline/executors";
 import { getStepDef, canRunStep, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
 import { deleteAssetsByStep } from "@/lib/asset-db";
+import { syncStepAssets } from "@/lib/asset-sync";
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult } from "@/types";
 
 export const maxDuration = 60;
@@ -100,6 +101,11 @@ export async function POST(request: Request) {
       // Apply project updates if any
       if (result.projectUpdates) {
         await update<Project>("projects", project_id, result.projectUpdates);
+      }
+
+      // Auto-sync asset records (best-effort)
+      if (!isSkipped) {
+        await syncStepAssets(project_id, step, result.output);
       }
 
       // Check if this was the last step

@@ -17,6 +17,8 @@ import {
   AlertCircle,
   RefreshCw,
   Download,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { Project, StepResult } from "@/types";
 import { STEPS, PRE_PROD_STEPS, PROD_STEPS, OUTPUT_LABELS } from "@/components/pipeline/constants";
@@ -34,6 +36,8 @@ export default function ProjectDetailPage() {
   const [packaging, setPackaging] = useState(false);
   const [packageProgress, setPackageProgress] = useState({ stage: "", pct: 0 });
   const abortRef = useRef(false);
+  const [preProdCollapsed, setPreProdCollapsed] = useState(false);
+  const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
 
   const loadProject = useCallback(async () => {
     try {
@@ -351,6 +355,10 @@ export default function ProjectDetailPage() {
   };
 
   const completedCount = steps.filter(s => s.status === "completed" || s.status === "skipped").length;
+  const preProdCompleted = PRE_PROD_STEPS.every(def => {
+    const s = steps.find(st => st.step === def.id);
+    return s?.status === "completed" || s?.status === "skipped";
+  });
   const totalCost = steps.reduce((sum, s) => sum + (s.cost_cents || 0), 0);
 
   // Collect completed step outputs for display below the pipeline
@@ -494,37 +502,49 @@ export default function ProjectDetailPage() {
         </Link>
       </div>
 
-      {/* Pre-Production Steps */}
+      {/* Pre-Production Steps — collapsible */}
       <Card>
-        <CardTitle className="flex items-center gap-2">
-          Pre-Production
-          <Badge variant="outline" className="text-xs">{PRE_PROD_STEPS.length} steps</Badge>
-        </CardTitle>
-        <CardContent className="mt-4 space-y-2">
-          {PRE_PROD_STEPS.map((def) => (
-            <StepRow
-              key={def.id}
-              def={def}
-              stepData={steps.find(s => s.step === def.id)}
-              currentStep={currentStep}
-              running={running}
-              onRetry={runStep}
-              onRunFrom={runFromStep}
-              onRunSingle={runSingleStep}
-              canRunSingle={canRunSingle(def)}
-              projectId={params.id as string}
-            />
-          ))}
-        </CardContent>
+        <button
+          onClick={() => setPreProdCollapsed(!preProdCollapsed)}
+          className="w-full flex items-center gap-2 p-4 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
+        >
+          {preProdCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <span className="font-semibold text-sm flex-1">Pre-Production</span>
+          <Badge variant="outline" className="text-xs">
+            {steps.filter(s => PRE_PROD_STEPS.some(p => p.id === s.step) && (s.status === "completed" || s.status === "skipped")).length}/{PRE_PROD_STEPS.length}
+          </Badge>
+          {preProdCompleted && <CheckCircle className="h-4 w-4 text-green-500" />}
+        </button>
+        {!preProdCollapsed && (
+          <CardContent className="pt-0 space-y-2">
+            {PRE_PROD_STEPS.map((def) => (
+              <StepRow
+                key={def.id}
+                def={def}
+                stepData={steps.find(s => s.step === def.id)}
+                currentStep={currentStep}
+                running={running}
+                onRetry={runStep}
+                onRunFrom={runFromStep}
+                onRunSingle={runSingleStep}
+                canRunSingle={canRunSingle(def)}
+                projectId={params.id as string}
+              />
+            ))}
+          </CardContent>
+        )}
       </Card>
 
-      {/* Production Steps */}
+      {/* Production Steps — always expanded */}
       <Card>
-        <CardTitle className="flex items-center gap-2">
-          Production
-          <Badge variant="outline" className="text-xs">{PROD_STEPS.length} steps</Badge>
-        </CardTitle>
-        <CardContent className="mt-4 space-y-2">
+        <div className="flex items-center gap-2 p-4">
+          <ChevronDown className="h-4 w-4" />
+          <span className="font-semibold text-sm flex-1">Production</span>
+          <Badge variant="outline" className="text-xs">
+            {steps.filter(s => PROD_STEPS.some(p => p.id === s.step) && (s.status === "completed" || s.status === "skipped")).length}/{PROD_STEPS.length}
+          </Badge>
+        </div>
+        <CardContent className="pt-0 space-y-2">
           {PROD_STEPS.map((def) => (
             <StepRow
               key={def.id}
@@ -542,26 +562,47 @@ export default function ProjectDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Step Outputs — shown below pipeline like the Script card */}
+      {/* Step Outputs — accordion style */}
       {completedOutputs.length > 0 && (
         <Card>
-          <CardTitle>Step Outputs</CardTitle>
-          <CardContent className="mt-4 space-y-6">
+          <div className="p-4">
+            <span className="font-semibold text-sm">Step Outputs</span>
+            <span className="text-xs text-muted-foreground ml-2">
+              {completedOutputs.filter(o => o.step !== "script_writing" && o.step !== "script_refinement").length} steps
+            </span>
+          </div>
+          <CardContent className="pt-0 space-y-1">
             {completedOutputs
               .filter(o => o.step !== "script_writing" && o.step !== "script_refinement")
               .map((o) => {
                 const stepData = steps.find(s => s.step === o.step);
                 const output = stepData?.output;
+                const isExpanded = expandedOutput === o.step;
                 return (
-                  <StepOutputRenderer
-                    key={o.step}
-                    step={o.step}
-                    label={o.label}
-                    text={o.text}
-                    output={output || {}}
-                    projectId={params.id as string}
-                    onOutputChanged={loadSteps}
-                  />
+                  <div key={o.step} className="border border-muted-foreground/10 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setExpandedOutput(isExpanded ? null : o.step)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/30 transition-colors text-sm"
+                    >
+                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                      <span className="font-medium flex-1">{o.label}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {stepData?.status || "pending"}
+                      </Badge>
+                    </button>
+                    {isExpanded && (
+                      <div className="px-3 pb-3 pt-1">
+                        <StepOutputRenderer
+                          step={o.step}
+                          label={o.label}
+                          text={o.text}
+                          output={output || {}}
+                          projectId={params.id as string}
+                          onOutputChanged={loadSteps}
+                        />
+                      </div>
+                    )}
+                  </div>
                 );
               })}
           </CardContent>

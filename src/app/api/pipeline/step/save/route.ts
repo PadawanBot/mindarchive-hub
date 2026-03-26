@@ -3,6 +3,7 @@ import { getById, update, upsertStep, getStepsByProject, getAllSettings } from "
 import { getStepDef, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
 import { buildSaveData } from "@/lib/pipeline/prompts";
 import { executors } from "@/lib/pipeline/executors";
+import { syncStepAssets } from "@/lib/asset-sync";
 import type { Project, PipelineStep } from "@/types";
 
 export const maxDuration = 30;
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
     if (saveData.projectUpdates) {
       await update<Project>("projects", project_id, saveData.projectUpdates);
     }
+
+    // Auto-sync asset records (best-effort)
+    await syncStepAssets(project_id, step, saveData.output);
 
     // Check if all done
     const updatedSteps = await getStepsByProject(project_id);
