@@ -107,7 +107,10 @@ export async function POST(request: Request) {
     const callbackUrl = `${request.headers.get("origin") || ""}/api/pipeline/assemble/callback`;
     const workerRes = await fetch(`${workerUrl}/assemble`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+      },
       body: JSON.stringify({ manifest, callbackUrl }),
     });
 

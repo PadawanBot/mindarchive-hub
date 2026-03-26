@@ -157,10 +157,25 @@ const script_refinement: StepExecutor = async (ctx) => {
 const timing_sync: StepExecutor = async (ctx) => {
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
+  const blend = (getPrevOutput(ctx.previousSteps, "blend_curator") as { blend_plan?: string })?.blend_plan || "";
   const wpm = ctx.format?.wpm || 145;
   const result = await callLLM(ctx,
-    "You are a video timing engineer. Map each visual asset to precise narration timestamps based on word count and WPM. The voiceover MP3 is the production clock. Output as JSON array with fields: section, start_time_seconds, end_time_seconds, word_count, visual_asset_id, transition_in, transition_out, notes.",
-    `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual plan:\n${visuals.slice(0, 2000)}`
+    `You are a video timing engineer. Map each scene to precise timestamps based on word count and WPM. The voiceover MP3 is the production clock.
+
+CRITICAL: Output as a JSON array where each entry has EXACTLY these fields:
+- scene (integer, starting from 1)
+- tag_type (one of: "DALLE", "RUNWAY", "STOCK", "MOTION_GRAPHIC" — based on the blend curator's primary_source for that scene)
+- duration (number, seconds — derived from word count / WPM)
+- label (string — section name from the script)
+- start_time_seconds (number)
+- end_time_seconds (number)
+- transition_in (string: "fade", "cut", "dissolve")
+- transition_out (string: "fade", "cut", "dissolve")
+- notes (string — timing notes for the editor)
+
+Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
+Duration of each scene is derived from the word count of that section at the given WPM.`,
+    `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan:\n${visuals.slice(0, 1500)}\n\nBlend curator plan (determines tag_type per scene):\n${blend.slice(0, 1500)}`
   );
   return { output: { timing: result.text }, cost_cents: estimateCost(ctx, result.inputTokens, result.outputTokens) };
 };

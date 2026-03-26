@@ -19,10 +19,25 @@ interface Job {
 
 const jobs = new Map<string, Job>();
 
-// Health check
+// Auth middleware
+const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const secret = process.env.WORKER_SECRET;
+  if (!secret) return next(); // skip auth in dev
+  const auth = req.headers.authorization;
+  if (auth !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
+
+// Health check (unauthenticated)
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", jobs: jobs.size });
 });
+
+// Apply auth to protected routes
+app.use("/assemble", authMiddleware);
+app.use("/status", authMiddleware);
 
 // Start assembly job
 app.post("/assemble", async (req, res) => {

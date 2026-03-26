@@ -778,7 +778,7 @@ export default function ProjectDetailPage() {
               <p className="text-xs text-muted-foreground">
                 <strong>Render Package:</strong> ZIP with timing.json, assets, docs, and Python render script (ffmpeg).
                 Produces horizontal + vertical video.
-                {" "}<strong>Quick Preview:</strong> Renders a basic video in your browser using ffmpeg.wasm.
+                {" "}<strong>Quick Preview:</strong> Basic browser render (best for clips under 60s — may be slow or crash on longer videos).
               </p>
               {(assembling || packaging) && (
                 <div className="space-y-2">

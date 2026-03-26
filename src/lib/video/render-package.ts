@@ -77,6 +77,24 @@ export async function downloadRenderPackage(
     }
   }
 
+  // Parse blend_curator output for per-scene source decisions
+  let blendPlan: { scene_id?: string; primary_source?: string }[] = [];
+  if (blendCurator?.blend_plan) {
+    try {
+      const parsed = JSON.parse(blendCurator.blend_plan as string);
+      blendPlan = Array.isArray(parsed) ? parsed : [];
+    } catch {}
+  }
+
+  const sourceToTagType = (source: string | undefined): TimingEntry["tag_type"] => {
+    switch (source?.toLowerCase()) {
+      case "pexels": return "STOCK";
+      case "motion_graphic": return "MOTION_GRAPHIC";
+      case "dalle":
+      default: return "DALLE";
+    }
+  };
+
   // Build timing entries — match scenes to assets
   const voiceoverDuration = ((voiceover?.estimated_duration_minutes as number) || 7) * 60;
 
@@ -88,16 +106,27 @@ export async function downloadRenderPackage(
         ? (timingEntry.end_time_seconds || 0) - (timingEntry.start_time_seconds || 0)
         : scene.duration_seconds || Math.round(voiceoverDuration / scenes.length);
 
-      // Determine tag type based on available assets and blend plan
-      let tagType: TimingEntry["tag_type"] = "DALLE";
+      // Determine tag type from blend_curator primary_source, default to DALLE
+      const blendEntry = blendPlan[i];
+      const tagType = sourceToTagType(blendEntry?.primary_source);
       const dalleIdx = i % dalleImages.length;
+
+      // Determine asset file based on tag type
+      let assetFile: string | undefined;
+      if (tagType === "DALLE") {
+        assetFile = dalleImages[dalleIdx] ? `dalle/scene_${i + 1}.png` : undefined;
+      } else if (tagType === "STOCK") {
+        assetFile = `stock/scene_${i + 1}.mp4`;
+      } else if (tagType === "MOTION_GRAPHIC") {
+        assetFile = `graphics/scene_${i + 1}.png`;
+      }
 
       timing.push({
         scene: i + 1,
         tag_type: tagType,
         duration: Math.max(duration, 2),
         label: scene.section || timingEntry?.section || `Scene ${i + 1}`,
-        asset_file: dalleImages[dalleIdx] ? `dalle/scene_${i + 1}.png` : undefined,
+        asset_file: assetFile,
       });
     }
   } else {
@@ -146,9 +175,9 @@ export async function downloadRenderPackage(
   const stockFolder = zip.folder("stock")!;
   const stockManifest = stockVideos.map((v, i) => ({
     index: i + 1,
-    url: v.url,
+    pexels_page_url: v.url,
     duration: v.duration,
-    note: "Download manually from Pexels — direct video download requires authentication",
+    note: "Visit the Pexels page URL above and click the free download button. Pexels videos are free to use, no attribution required.",
   }));
   stockFolder.file("stock_manifest.json", JSON.stringify(stockManifest, null, 2));
 
