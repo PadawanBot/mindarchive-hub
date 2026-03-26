@@ -17,15 +17,22 @@ export async function POST() {
   const sb = createClient(url, key);
   const results: string[] = [];
 
-  // Create storage bucket for project assets
+  // Create or update storage bucket for project assets (must be public)
   const { error: bucketError } = await sb.storage.createBucket("project-assets", {
     public: true,
     fileSizeLimit: 52428800, // 50MB
   });
-  if (bucketError && !bucketError.message.includes("already exists")) {
+  if (bucketError && bucketError.message.includes("already exists")) {
+    // Bucket exists — ensure it's public
+    const { error: updateError } = await sb.storage.updateBucket("project-assets", {
+      public: true,
+      fileSizeLimit: 52428800,
+    });
+    results.push(updateError ? `Bucket update error: ${updateError.message}` : "Storage bucket 'project-assets' set to public");
+  } else if (bucketError) {
     results.push(`Bucket error: ${bucketError.message}`);
   } else {
-    results.push("Storage bucket 'project-assets' ready");
+    results.push("Storage bucket 'project-assets' created (public)");
   }
 
   // Verify unique constraint exists on pipeline_steps
