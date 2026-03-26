@@ -430,11 +430,31 @@ const hero_scenes: StepExecutor = async (ctx) => {
     } catch {}
   }
 
-  // Fallback: use the project topic
+  // Also try getting prompts from the script for richer descriptions
   if (scenePrompts.length === 0) {
-    scenePrompts = [
-      { section: "Hero Scene", dalle_prompt: `Cinematic dramatic scene: ${ctx.project.topic}` },
-    ];
+    const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
+      || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
+
+    // Build cinematic prompts from the script's visual cues
+    const visualCues = script.match(/\[VISUAL CUE:([^\]]+)\]/g) || [];
+    if (visualCues.length > 0) {
+      scenePrompts = visualCues.slice(0, 3).map((cue, i) => ({
+        section: `Scene ${i + 1}`,
+        dalle_prompt: cue.replace(/\[VISUAL CUE:\s*/, "").replace(/\]$/, "").trim(),
+      }));
+    } else {
+      // Rich fallback with cinematic description
+      scenePrompts = [
+        {
+          section: "Cold Open",
+          dalle_prompt: `Cinematic anime-style dramatic scene. A powerful warrior in an orange martial arts uniform discovers a mysterious black notebook glowing with dark supernatural energy. The scene is lit with golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
+        },
+        {
+          section: "Climax",
+          dalle_prompt: `Dramatic confrontation scene in anime cinematic style. Two powerful figures face each other — one radiating golden heroic energy, the other shrouded in dark supernatural shadows with an ominous notebook between them. Lightning crackles, the ground cracks with power. Intense emotional close-up, movie quality. Topic: ${ctx.project.topic}`,
+        },
+      ];
+    }
   }
 
   // Generate up to 2 hero scenes via text-to-video (no image needed)
@@ -443,8 +463,7 @@ const hero_scenes: StepExecutor = async (ctx) => {
 
   for (const scene of toProcess) {
     try {
-      // Use the DALL-E prompt as the video prompt (it's already a good visual description)
-      const promptText = scene.dalle_prompt.slice(0, 512);
+      const promptText = scene.dalle_prompt.slice(0, 1000);
       const result = await generateVideoFromImage(key, "", promptText);
       scenes.push({
         section: scene.section || "Hero Scene",
