@@ -133,6 +133,45 @@ export async function getAssetById(assetId: string): Promise<AssetRow | null> {
 }
 
 /**
+ * Delete all asset records for a given project + step.
+ * Used when a step is re-run to clear stale records before new ones are created.
+ */
+export async function deleteAssetsByStep(projectId: string, step: string): Promise<number> {
+  const sb = getSupabase();
+  if (!sb) return 0;
+
+  // Get all assets for this step
+  const { data: assets } = await sb
+    .from("assets")
+    .select("id, storage_path")
+    .eq("project_id", projectId)
+    .eq("step", step);
+
+  if (!assets || assets.length === 0) return 0;
+
+  // Delete storage files (best-effort, don't fail if some are missing)
+  const storagePaths = assets
+    .map(a => a.storage_path)
+    .filter(Boolean);
+  if (storagePaths.length > 0) {
+    await sb.storage.from("project-assets").remove(storagePaths);
+  }
+
+  // Delete DB records
+  const { error } = await sb
+    .from("assets")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("step", step);
+
+  if (error) {
+    console.error("[asset-db] deleteByStep failed:", error.message);
+    return 0;
+  }
+  return assets.length;
+}
+
+/**
  * Delete an asset record and its storage file.
  */
 export async function deleteAsset(assetId: string): Promise<boolean> {

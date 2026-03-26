@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getById, update, getAllSettings, upsertStep, getStepsByProject } from "@/lib/store";
 import { executors } from "@/lib/pipeline/executors";
 import { getStepDef, canRunStep, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
+import { deleteAssetsByStep } from "@/lib/asset-db";
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult } from "@/types";
 
 export const maxDuration = 60;
@@ -52,6 +53,11 @@ export async function POST(request: Request) {
     // Mark step as running
     const now = new Date().toISOString();
     await upsertStep(project_id, step, { status: "running", started_at: now });
+
+    // Clean up stale asset records from previous runs
+    if (force) {
+      await deleteAssetsByStep(project_id, step);
+    }
 
     // Update project status
     const newStatus = stepDef.phase === "pre_production" ? "pre_production" : "production";
