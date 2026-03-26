@@ -74,7 +74,8 @@ create table if not exists pipeline_steps (
   duration_ms int default 0,
   started_at timestamptz,
   completed_at timestamptz,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  modified_at timestamptz                             -- set when assets are manually replaced
 );
 
 create index if not exists idx_pipeline_steps_project on pipeline_steps(project_id);
@@ -89,10 +90,18 @@ create table if not exists assets (
   mime_type text not null default 'application/octet-stream',
   size_bytes int default 0,
   metadata jsonb default '{}',
+  step text,                                          -- pipeline step this asset belongs to
+  slot_key text,                                      -- output field path e.g. "images[2].url"
+  source text not null default 'generated',           -- 'generated' | 'manual'
+  url text,                                           -- public URL of the asset
+  width int,
+  height int,
+  duration_ms int,
   created_at timestamptz default now()
 );
 
 create index if not exists idx_assets_project on assets(project_id);
+create unique index if not exists idx_assets_project_step_slot on assets(project_id, step, slot_key);
 
 -- ─── Cost Ledger ───
 create table if not exists cost_ledger (

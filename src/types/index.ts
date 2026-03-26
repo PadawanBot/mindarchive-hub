@@ -76,6 +76,7 @@ export interface StepResult {
   started_at?: string;
   completed_at?: string;
   created_at?: string;
+  modified_at?: string;
 }
 
 // ─── Project ───

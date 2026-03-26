@@ -90,3 +90,41 @@ export function getAssetUrl(storagePath: string): string | null {
   const { data } = sb.storage.from(BUCKET).getPublicUrl(storagePath);
   return data.publicUrl;
 }
+
+/**
+ * Create a signed upload URL for direct client-to-Supabase uploads.
+ * Used for large files (>4MB) that exceed Vercel's body limit.
+ */
+export async function createSignedUploadUrl(
+  storagePath: string,
+  _mimeType: string
+): Promise<{ signedUrl: string; token: string } | null> {
+  const sb = getStorageClient();
+  if (!sb) return null;
+
+  const { data, error } = await sb.storage
+    .from(BUCKET)
+    .createSignedUploadUrl(storagePath);
+
+  if (error || !data) {
+    console.error(`[storage] Signed upload URL failed: ${error?.message}`);
+    return null;
+  }
+
+  return { signedUrl: data.signedUrl, token: data.token };
+}
+
+/**
+ * Delete a file from Supabase Storage.
+ */
+export async function deleteFromStorage(storagePath: string): Promise<boolean> {
+  const sb = getStorageClient();
+  if (!sb) return false;
+
+  const { error } = await sb.storage.from(BUCKET).remove([storagePath]);
+  if (error) {
+    console.error(`[storage] Delete failed: ${error.message}`);
+    return false;
+  }
+  return true;
+}

@@ -21,7 +21,9 @@ import {
   Download,
   ExternalLink,
 } from "lucide-react";
-import type { Project, StepResult, StepStatus } from "@/types";
+import type { Project, StepResult, StepStatus, PipelineStep } from "@/types";
+import { AssetGrid } from "@/components/assets/AssetGrid";
+import { getSlotsForStep } from "@/lib/asset-validation";
 
 // Must match src/lib/pipeline/steps.ts
 const STEPS = [
@@ -124,6 +126,9 @@ function StepRow({ def, stepData, currentStep, running, onRetry, onRunFrom, onRu
         </Button>
       )}
       <Badge variant={statusVariant(status)} className="text-xs">{status}</Badge>
+      {stepData?.modified_at && stepData.completed_at && stepData.modified_at > stepData.completed_at && (
+        <Badge variant="outline" className="text-xs border-amber-500/50 text-amber-500">modified</Badge>
+      )}
     </div>
   );
 }
@@ -710,6 +715,19 @@ export default function ProjectDetailPage() {
         </Card>
       )}
 
+      {/* Tab navigation */}
+      <div className="flex gap-2 border-b border-muted-foreground/10 pb-1">
+        <span className="px-3 py-1.5 text-sm font-medium border-b-2 border-primary text-foreground">
+          Pipeline
+        </span>
+        <Link
+          href={`/projects/${params.id}/assets`}
+          className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Assets
+        </Link>
+      </div>
+
       {/* Pre-Production Steps */}
       <Card>
         <CardTitle className="flex items-center gap-2">
@@ -852,6 +870,17 @@ export default function ProjectDetailPage() {
                       <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-64 overflow-y-auto">
                         {o.text}
                       </pre>
+                    )}
+                    {/* Asset management grid — shows upload/replace slots for asset-producing steps */}
+                    {output && getSlotsForStep(o.step).length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-muted-foreground/10">
+                        <AssetGrid
+                          projectId={params.id as string}
+                          step={o.step as PipelineStep}
+                          output={output}
+                          onOutputChanged={loadSteps}
+                        />
+                      </div>
                     )}
                   </div>
                 );
