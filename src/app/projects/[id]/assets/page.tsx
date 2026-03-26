@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Image as ImageIcon, FileAudio, FileVideo, Upload, FolderOpen } from "lucide-react";
+import { ArrowLeft, Image as ImageIcon, FileAudio, FileVideo, Upload, FolderOpen, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AssetGrid } from "@/components/assets/AssetGrid";
 import { getSlotsForStep } from "@/lib/asset-validation";
 import type { PipelineStep, StepResult } from "@/types";
@@ -42,6 +43,7 @@ export default function AssetLibraryPage() {
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "image" | "audio" | "video">("all");
+  const [backfilling, setBackfilling] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -57,6 +59,22 @@ export default function AssetLibraryPage() {
     } catch {}
     setLoading(false);
   }, [projectId]);
+
+  const backfillAssets = useCallback(async () => {
+    setBackfilling(true);
+    try {
+      const res = await fetch("/api/assets/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await loadData();
+      }
+    } catch {}
+    setBackfilling(false);
+  }, [projectId, loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -76,12 +94,18 @@ export default function AssetLibraryPage() {
         <Link href={`/projects/${projectId}`}>
           <ArrowLeft className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
         </Link>
-        <div>
+        <div className="flex-1">
           <h1 className="text-xl font-bold">Asset Library</h1>
           <p className="text-sm text-muted-foreground">
             Manage all assets for this project — upload, replace, or delete files per step.
           </p>
         </div>
+        {assets.length === 0 && !loading && (
+          <Button variant="outline" size="sm" onClick={backfillAssets} disabled={backfilling}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${backfilling ? "animate-spin" : ""}`} />
+            {backfilling ? "Scanning..." : "Detect Existing Assets"}
+          </Button>
+        )}
       </div>
 
       {/* Summary stats */}
