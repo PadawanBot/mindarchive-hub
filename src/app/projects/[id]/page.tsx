@@ -133,6 +133,8 @@ export default function ProjectDetailPage() {
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [assemblyJobId, setAssemblyJobId] = useState<string | null>(null);
+  const [assemblyStatus, setAssemblyStatus] = useState<string | null>(null);
   const abortRef = useRef(false);
 
   const loadProject = useCallback(async () => {
@@ -386,6 +388,42 @@ export default function ProjectDetailPage() {
 
   const stopPipeline = () => {
     abortRef.current = true;
+  };
+
+  const assembleVideo = async () => {
+    setError(null);
+    setAssemblyStatus("starting");
+    try {
+      const res = await fetch("/api/pipeline/assemble", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: params.id }),
+      });
+      const data = await res.json();
+      if (!data.success) { setError(data.error); setAssemblyStatus(null); return; }
+      setAssemblyJobId(data.data.jobId);
+      setAssemblyStatus("queued");
+
+      // Poll worker for status
+      const workerUrl = data.data.workerUrl;
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${workerUrl}/status/${data.data.jobId}`);
+          const statusData = await statusRes.json();
+          setAssemblyStatus(statusData.status);
+          if (statusData.status === "completed") {
+            clearInterval(pollInterval);
+            await loadProject();
+          } else if (statusData.status === "failed") {
+            clearInterval(pollInterval);
+            setError(`Assembly failed: ${statusData.error}`);
+          }
+        } catch {}
+      }, 5000);
+    } catch (err) {
+      setError(String(err));
+      setAssemblyStatus(null);
+    }
   };
 
   if (!project) {
@@ -685,6 +723,39 @@ export default function ProjectDetailPage() {
                   {steps.filter(s => ["image_generation", "voiceover_generation", "stock_footage", "hero_scenes"].includes(s.step) && s.status === "completed").length} generated
                 </p>
               </div>
+            </div>
+
+            {/* Assemble Video / Video Player */}
+            <div className="mt-4 pt-4 border-t border-muted">
+              {project.output_url ? (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-green-400">Final Video Ready</h4>
+                  <video controls className="w-full rounded-lg" src={project.output_url}>
+                    Your browser does not support the video element.
+                  </video>
+                  <a href={project.output_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+                    <Download className="h-4 w-4" /> Download MP4
+                  </a>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={assembleVideo}
+                    disabled={!!assemblyStatus}
+                    variant="outline"
+                  >
+                    {assemblyStatus ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {assemblyStatus}</>
+                    ) : (
+                      <><Play className="h-4 w-4 mr-2" /> Assemble Video</>
+                    )}
+                  </Button>
+                  {!assemblyStatus && (
+                    <span className="text-xs text-muted-foreground">Requires Railway worker (WORKER_URL env var)</span>
+                  )}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
