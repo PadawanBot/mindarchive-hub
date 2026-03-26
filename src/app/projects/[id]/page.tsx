@@ -681,12 +681,24 @@ export default function ProjectDetailPage() {
                     ) : o.step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) ? (
                       /* Hero Scenes — show video previews if available */
                       <div className="space-y-2">
-                        {(output.scenes as { task_id: string; status: string; video_url?: string; image_url: string }[]).map((scene, i) => (
+                        {(output.scenes as { task_id?: string; status?: string; video_url?: string; image_url?: string; prompt?: string }[]).map((scene, i) => (
                           <div key={i} className="flex items-center gap-3 p-2 bg-muted rounded-lg">
-                            <img src={scene.image_url} alt={`Hero ${i + 1}`} className="w-20 h-12 object-cover rounded" />
+                            {scene.image_url ? (
+                              <img
+                                src={scene.image_url}
+                                alt={`Hero ${i + 1}`}
+                                className="w-20 h-12 object-cover rounded"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                              />
+                            ) : (
+                              <div className="w-20 h-12 bg-background rounded flex items-center justify-center text-xs text-muted-foreground">No img</div>
+                            )}
                             <div className="flex-1">
                               <p className="text-xs font-medium">Hero Scene {i + 1}</p>
-                              <p className="text-xs text-muted-foreground">Status: {scene.status}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {scene.task_id ? `Runway task: ${scene.status || "pending"}` : "No Runway key — skipped video generation"}
+                              </p>
+                              {scene.prompt && <p className="text-xs text-muted-foreground line-clamp-1">{scene.prompt}</p>}
                             </div>
                             {scene.video_url && (
                               <a href={scene.video_url} target="_blank" rel="noopener noreferrer"
@@ -694,6 +706,9 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         ))}
+                        {output.status === "skipped" && typeof output.reason === "string" && (
+                          <p className="text-xs text-yellow-500">{output.reason}</p>
+                        )}
                       </div>
                     ) : (
                       /* Default — pre-formatted text */
