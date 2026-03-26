@@ -435,38 +435,64 @@ const stock_footage: StepExecutor = async (ctx) => {
   const key = ctx.settings.pexels_key;
   if (!key) return { output: { status: "skipped", reason: "No Pexels API key configured" }, cost_cents: 0 };
 
-  const blend = (getPrevOutput(ctx.previousSteps, "blend_curator") as { blend_plan?: string })?.blend_plan || "";
+  // Use LLM to generate Pexels-optimized search queries based on the visual direction
+  // Pexels is a real-world stock footage platform — queries must describe visual atmosphere,
+  // mood, lighting, and abstract visuals rather than specific characters or plot points.
+  const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
+  const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
+
   let queries: string[] = [];
+  let llmCost = 0;
+
   try {
-    const parsed = JSON.parse(blend);
-    if (Array.isArray(parsed)) {
-      queries = parsed.flatMap((s: { pexels_search_queries?: string[] }) => s.pexels_search_queries || []);
+    const queryResult = await callLLM(ctx,
+      `You are a stock footage search specialist for Pexels.com. Your job is to translate creative briefs into effective Pexels search queries.
+
+CRITICAL RULES:
+- Pexels only has REAL-WORLD footage (nature, cities, people, abstract, particles, etc.)
+- NEVER use character names, anime terms, cartoon references, or fictional concepts
+- Focus on VISUAL ATMOSPHERE: lighting, mood, color palette, motion, texture
+- Each query should be 2-4 words for best Pexels results
+- Think about B-roll that would visually complement the narration
+
+Example translations:
+- "Epic battle scene with energy blasts" → "dramatic lightning storm dark sky"
+- "Character discovers mysterious notebook" → "old leather book dramatic lighting"
+- "Dark supernatural power awakening" → "dark fog particles glowing"
+- "Intense confrontation between rivals" → "dramatic shadows silhouette contrast"
+- "Transformation scene with aura" → "glowing particles energy abstract"`,
+      `Generate exactly 5 Pexels search queries for B-roll footage that visually complements this video production.
+
+Topic: ${ctx.project.topic}
+Visual direction excerpt: ${visuals.slice(0, 1500)}
+Script excerpt: ${script.slice(0, 1000)}
+
+Output as a JSON array of 5 strings. Example: ["dark atmospheric fog", "glowing particles abstract", "dramatic sky clouds timelapse", "old book candlelight", "energy lightning dark"]`,
+      500
+    );
+    llmCost = estimateCost(ctx, queryResult.inputTokens, queryResult.outputTokens);
+
+    // Parse the JSON array from the LLM response
+    const text = queryResult.text.trim();
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        queries = parsed.filter((q: unknown) => typeof q === "string").slice(0, 5);
+      }
     }
   } catch {
-    // Fallback: use the project topic
-    queries = [ctx.project.topic];
+    // Fallback to generic atmospheric queries
+    queries = ["dramatic dark atmosphere", "abstract particles glowing", "dark sky storm clouds", "mysterious fog light rays", "energy lightning abstract"];
   }
 
-  if (queries.length === 0) queries = [ctx.project.topic];
-
-  // Append anime/cartoon style keywords based on channel profile
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const styleKeywords = (ctx.profile as any)?.visual_style as string || "anime cartoon animated";
-  queries = queries.map(q => {
-    // Only append if the query doesn't already contain style terms
-    const lower = q.toLowerCase();
-    if (lower.includes("anime") || lower.includes("cartoon") || lower.includes("animated")) return q;
-    return `${q} ${styleKeywords}`;
-  });
+  if (queries.length === 0) {
+    queries = ["dramatic dark atmosphere", "abstract particles glowing", "dark sky storm clouds"];
+  }
 
   const results: { query: string; video_count: number; videos: { id: number; url: string; file_url: string; thumbnail: string; duration: number }[] }[] = [];
   for (const q of queries.slice(0, 5)) {
-    let videos = await searchVideos(key, q, 3);
-    // If no anime results, try with just "anime" appended
-    if (videos.length === 0) {
-      const fallbackQuery = q.replace(styleKeywords, "").trim() + " anime";
-      videos = await searchVideos(key, fallbackQuery, 3);
-    }
+    const videos = await searchVideos(key, q, 3);
     results.push({
       query: q,
       video_count: videos.length,
@@ -488,7 +514,7 @@ const stock_footage: StepExecutor = async (ctx) => {
     });
   }
 
-  return { output: { status: "completed", footage: results }, cost_cents: 0 };
+  return { output: { status: "completed", footage: results }, cost_cents: llmCost };
 };
 
 const motion_graphics: StepExecutor = async (ctx) => {
