@@ -182,7 +182,7 @@ export default function AssetLibraryPage() {
                     {stepAssets.map((asset) => (
                       <div key={asset.id} className="flex items-center gap-2 text-xs text-muted-foreground">
                         {typeIcon(asset.type)}
-                        <span className="font-mono truncate flex-1">{asset.filename}</span>
+                        <span className="truncate flex-1">{asset.slot_key || asset.filename}</span>
                         <Badge variant="outline" className="text-[10px]">{asset.source}</Badge>
                         {asset.size_bytes > 0 && (
                           <span>{(asset.size_bytes / 1024).toFixed(0)}KB</span>

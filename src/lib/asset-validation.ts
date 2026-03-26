@@ -53,21 +53,12 @@ const heroSceneSlots: AssetSlotDef[] = Array.from({ length: 2 }, (_, i) => ({
 
 const stockFootageSlots: AssetSlotDef[] = Array.from({ length: 5 }, (_, i) => ({
   step: "stock_footage" as PipelineStep,
-  slotKey: `footage_files[${i}].url`,
+  slotKey: `stock_clips[${i}].url`,
   label: `Stock Clip ${i + 1}`,
   mimeCategory: "video" as const,
   acceptMimeTypes: ["video/mp4", "video/quicktime", "video/webm"],
   maxSizeBytes: 100 * 1024 * 1024,
   maxDurationMs: 60 * 1000,
-}));
-
-const motionGraphicSlots: AssetSlotDef[] = Array.from({ length: 5 }, (_, i) => ({
-  step: "motion_graphics" as PipelineStep,
-  slotKey: `graphics[${i}].url`,
-  label: `Motion Graphic ${i + 1}`,
-  mimeCategory: "image" as const,
-  acceptMimeTypes: ["image/png", "image/gif", "video/mp4"],
-  maxSizeBytes: 20 * 1024 * 1024,
 }));
 
 export const ASSET_SLOT_DEFS: Partial<Record<PipelineStep, AssetSlotDef[]>> = {
@@ -82,7 +73,6 @@ export const ASSET_SLOT_DEFS: Partial<Record<PipelineStep, AssetSlotDef[]>> = {
   }],
   image_generation: imageSlots,
   stock_footage: stockFootageSlots,
-  motion_graphics: motionGraphicSlots,
   thumbnail_creation: [{
     step: "thumbnail_creation",
     slotKey: "thumbnail_url",
