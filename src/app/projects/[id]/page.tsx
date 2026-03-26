@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useVideoAssembler } from "@/lib/video/assembler";
+import { downloadRenderPackage } from "@/lib/video/render-package";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
@@ -135,6 +136,8 @@ export default function ProjectDetailPage() {
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { assemble, assembling, progress: assemblyProgress, error: assemblyError } = useVideoAssembler();
+  const [packaging, setPackaging] = useState(false);
+  const [packageProgress, setPackageProgress] = useState({ stage: "", pct: 0 });
   const abortRef = useRef(false);
 
   const loadProject = useCallback(async () => {
@@ -733,36 +736,64 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
-            {/* Assemble Video */}
-            <div className="mt-4 pt-4 border-t border-muted">
-              <div className="flex items-center gap-3">
+            {/* Video Output Options */}
+            <div className="mt-4 pt-4 border-t border-muted space-y-3">
+              <h4 className="text-sm font-semibold">Video Output</h4>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={async () => {
+                    setPackaging(true);
+                    try {
+                      await downloadRenderPackage(
+                        project.title,
+                        steps,
+                        (stage, pct) => setPackageProgress({ stage, pct })
+                      );
+                    } catch (err) {
+                      setError(String(err));
+                    }
+                    setPackaging(false);
+                  }}
+                  disabled={packaging || assembling}
+                  variant="primary"
+                >
+                  {packaging ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {packageProgress.stage}</>
+                  ) : (
+                    <><Download className="h-4 w-4 mr-2" /> Download Render Package</>
+                  )}
+                </Button>
                 <Button
                   onClick={assembleVideo}
-                  disabled={assembling}
+                  disabled={assembling || packaging}
                   variant="outline"
                 >
                   {assembling ? (
                     <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {assemblyProgress.stage}</>
                   ) : (
-                    <><Play className="h-4 w-4 mr-2" /> Assemble Video</>
+                    <><Play className="h-4 w-4 mr-2" /> Quick Preview (Browser)</>
                   )}
                 </Button>
-                {!assembling && (
-                  <span className="text-xs text-muted-foreground">Renders in your browser using ffmpeg.wasm — no server needed</span>
-                )}
               </div>
-              {assembling && (
-                <div className="mt-3 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                <strong>Render Package:</strong> ZIP with timing.json, assets, docs, and Python render script (ffmpeg).
+                Produces horizontal + vertical video.
+                {" "}<strong>Quick Preview:</strong> Renders a basic video in your browser using ffmpeg.wasm.
+              </p>
+              {(assembling || packaging) && (
+                <div className="space-y-2">
                   <div className="flex items-center gap-3">
                     <div className="flex-1 bg-muted rounded-full h-2">
                       <div
                         className="bg-primary h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${assemblyProgress.percent}%` }}
+                        style={{ width: `${assembling ? assemblyProgress.percent : packageProgress.pct}%` }}
                       />
                     </div>
-                    <span className="text-xs text-muted-foreground">{assemblyProgress.percent}%</span>
+                    <span className="text-xs text-muted-foreground">
+                      {assembling ? `${assemblyProgress.percent}%` : `${packageProgress.pct}%`}
+                    </span>
                   </div>
-                  {assemblyProgress.detail && (
+                  {assembling && assemblyProgress.detail && (
                     <p className="text-xs text-muted-foreground">{assemblyProgress.detail}</p>
                   )}
                 </div>
