@@ -4,6 +4,19 @@ export type ImageProvider = "dalle" | "pexels";
 export type VoiceProvider = "elevenlabs";
 export type VideoProvider = "runway" | "pexels";
 
+// ─── Asset Sources ───
+export interface AssetSources {
+  dalle_images: boolean;
+  stock_footage: boolean;
+  hero_scenes: boolean;
+}
+
+export const DEFAULT_ASSET_SOURCES: AssetSources = {
+  dalle_images: true,
+  stock_footage: true,
+  hero_scenes: true,
+};
+
 // ─── Channel Profile ───
 export interface ChannelProfile {
   id: string;
@@ -18,6 +31,7 @@ export interface ChannelProfile {
   image_provider: ImageProvider;
   voice_provider: VoiceProvider;
   voice_id: string;
+  asset_sources?: AssetSources;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +109,7 @@ export interface Project {
   script_data?: Record<string, unknown> | null;
   topic_data?: Record<string, unknown> | null;
   visual_data?: Record<string, unknown> | null;
+  asset_sources?: AssetSources; // Override channel profile defaults per-project
   metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;

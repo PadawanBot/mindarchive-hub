@@ -721,6 +721,47 @@ export default function ProjectDetailPage() {
         </Card>
       )}
 
+      {/* Asset source toggles */}
+      <Card>
+        <CardContent className="flex items-center gap-6 py-2">
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Asset Sources</span>
+          {(["dalle_images", "stock_footage", "hero_scenes"] as const).map((key) => {
+            const labels = { dalle_images: "DALL-E Images", stock_footage: "Stock Footage", hero_scenes: "Hero Scenes" };
+            const profileSources = project.metadata?.profile_asset_sources as Record<string, boolean> | undefined;
+            // Resolve: project override > profile defaults > true
+            const sources = {
+              ...{ dalle_images: true, stock_footage: true, hero_scenes: true },
+              ...(profileSources || {}),
+              ...(project.asset_sources || {}),
+            };
+            const enabled = sources[key] !== false;
+            return (
+              <label key={key} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={async (e) => {
+                    const newSources = { ...(project.asset_sources || {}), [key]: e.target.checked };
+                    try {
+                      await fetch(`/api/projects/${params.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ asset_sources: newSources }),
+                      });
+                      await loadProject();
+                    } catch {}
+                  }}
+                  disabled={running}
+                  className="rounded border-muted-foreground/30"
+                />
+                <span className={enabled ? "text-foreground" : "text-muted-foreground line-through"}>{labels[key]}</span>
+              </label>
+            );
+          })}
+          <span className="text-xs text-muted-foreground ml-auto">Unchecked steps will be skipped</span>
+        </CardContent>
+      </Card>
+
       {/* Tab navigation */}
       <div className="flex gap-2 border-b border-muted-foreground/10 pb-1">
         <span className="px-3 py-1.5 text-sm font-medium border-b-2 border-primary text-foreground">

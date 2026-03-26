@@ -1,4 +1,5 @@
-import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult } from "@/types";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources } from "@/types";
+import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
 import { generateImage } from "@/lib/providers/openai";
@@ -82,6 +83,15 @@ export interface StepOutput {
 }
 
 export type StepExecutor = (ctx: StepContext) => Promise<StepOutput>;
+
+/** Resolve effective asset sources: project override > channel profile > defaults */
+function getAssetSources(ctx: StepContext): AssetSources {
+  return {
+    ...DEFAULT_ASSET_SOURCES,
+    ...(ctx.profile?.asset_sources || {}),
+    ...(ctx.project.asset_sources || {}),
+  };
+}
 
 // ─── LLM helpers ───
 
@@ -381,6 +391,8 @@ const voiceover_generation: StepExecutor = async (ctx) => {
 };
 
 const image_generation: StepExecutor = async (ctx) => {
+  const sources = getAssetSources(ctx);
+  if (!sources.dalle_images) return { output: { status: "skipped", reason: "DALL-E images disabled for this production" }, cost_cents: 0 };
   const key = ctx.settings.openai_key;
   if (!key) return { output: { status: "skipped", reason: "No OpenAI API key configured" }, cost_cents: 0 };
 
@@ -432,6 +444,8 @@ const image_generation: StepExecutor = async (ctx) => {
 };
 
 const stock_footage: StepExecutor = async (ctx) => {
+  const sources = getAssetSources(ctx);
+  if (!sources.stock_footage) return { output: { status: "skipped", reason: "Stock footage disabled for this production" }, cost_cents: 0 };
   const key = ctx.settings.pexels_key;
   if (!key) return { output: { status: "skipped", reason: "No Pexels API key configured" }, cost_cents: 0 };
 
@@ -539,6 +553,8 @@ const motion_graphics: StepExecutor = async (ctx) => {
 };
 
 const hero_scenes: StepExecutor = async (ctx) => {
+  const sources = getAssetSources(ctx);
+  if (!sources.hero_scenes) return { output: { status: "skipped", reason: "Hero scenes disabled for this production" }, cost_cents: 0 };
   const key = ctx.settings.runway_key;
   if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
 
