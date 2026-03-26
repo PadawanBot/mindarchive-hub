@@ -419,33 +419,42 @@ const hero_scenes: StepExecutor = async (ctx) => {
   const key = ctx.settings.runway_key;
   if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
 
-  // Get DALL-E image URLs from the image_generation step output
-  const imageOutput = getPrevOutput(ctx.previousSteps, "image_generation") as
-    | { images?: { url: string; prompt: string; revised_prompt: string }[] }
-    | undefined;
-  const images = imageOutput?.images || [];
-
-  if (images.length === 0) {
-    return { output: { status: "skipped", reason: "No images available from image_generation step" }, cost_cents: 0 };
+  // Get visual direction prompts for cinematic scene descriptions
+  const visualOutput = getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string } | undefined;
+  let scenePrompts: { section: string; dalle_prompt: string }[] = [];
+  if (visualOutput?.visuals) {
+    try {
+      const parsed = JSON.parse(visualOutput.visuals);
+      const scenes = Array.isArray(parsed) ? parsed : parsed.scenes || [];
+      scenePrompts = scenes.filter((s: { dalle_prompt?: string }) => s.dalle_prompt);
+    } catch {}
   }
 
-  // For each image (up to 2), start a Runway video generation task
-  const scenesToProcess = images.slice(0, 2);
-  const scenes: { imageUrl: string; promptText: string; taskId: string }[] = [];
+  // Fallback: use the project topic
+  if (scenePrompts.length === 0) {
+    scenePrompts = [
+      { section: "Hero Scene", dalle_prompt: `Cinematic dramatic scene: ${ctx.project.topic}` },
+    ];
+  }
 
-  for (const scene of scenesToProcess) {
+  // Generate up to 2 hero scenes via text-to-video (no image needed)
+  const toProcess = scenePrompts.slice(0, 2);
+  const scenes: { promptText: string; section: string; taskId: string }[] = [];
+
+  for (const scene of toProcess) {
     try {
-      const promptText = scene.revised_prompt || scene.prompt || ctx.project.topic;
-      const result = await generateVideoFromImage(key, scene.url, promptText);
+      // Use the DALL-E prompt as the video prompt (it's already a good visual description)
+      const promptText = scene.dalle_prompt.slice(0, 512);
+      const result = await generateVideoFromImage(key, "", promptText);
       scenes.push({
-        imageUrl: scene.url,
+        section: scene.section || "Hero Scene",
         promptText,
         taskId: result.taskId,
       });
     } catch (err) {
       scenes.push({
-        imageUrl: scene.url,
-        promptText: scene.revised_prompt || scene.prompt || ctx.project.topic,
+        section: scene.section || "Hero Scene",
+        promptText: scene.dalle_prompt.slice(0, 512),
         taskId: `error: ${String(err)}`,
       });
     }
@@ -457,11 +466,10 @@ const hero_scenes: StepExecutor = async (ctx) => {
     output: {
       status: successCount > 0 ? "completed" : "failed",
       scenes,
-      total_requested: scenesToProcess.length,
+      total_requested: toProcess.length,
       tasks_started: successCount,
-      note: "Video generation tasks started. Poll /api/pipeline/runway/status?task_id=<id> for completion.",
+      note: "Video generation tasks started via text-to-video. Auto-polling will check for completion.",
     },
-    // Runway Gen-4 Turbo costs ~$0.50 per 5s clip
     cost_cents: successCount * 50,
   };
 };
