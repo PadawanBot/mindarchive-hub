@@ -851,16 +851,26 @@ export default function ProjectDetailPage() {
                         )}
                       </div>
                     ) : o.step === "stock_footage" && output?.footage && Array.isArray(output.footage) ? (
-                      /* Stock Footage — show video links */
-                      <div className="space-y-2">
-                        {(output.footage as { query: string; videos: { url: string; duration: number }[] }[]).map((group, i) => (
+                      /* Stock Footage — show video thumbnails and links */
+                      <div className="space-y-3">
+                        {(output.footage as { query: string; videos: { url: string; file_url?: string; thumbnail?: string; duration: number }[] }[]).map((group, i) => (
                           <div key={i}>
-                            <p className="text-xs font-medium text-muted-foreground mb-1">Search: &ldquo;{group.query}&rdquo;</p>
-                            <div className="flex gap-2 flex-wrap">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Search: &ldquo;{group.query}&rdquo;</p>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               {group.videos.map((v, j) => (
-                                <a key={j} href={v.url} target="_blank" rel="noopener noreferrer"
-                                  className="text-xs bg-muted px-2 py-1 rounded hover:bg-primary/20 transition-colors">
-                                  Video {j + 1} ({v.duration}s)
+                                <a key={j} href={v.file_url || v.url} target="_blank" rel="noopener noreferrer"
+                                  className="block rounded-lg overflow-hidden border border-muted hover:border-primary/50 transition-colors">
+                                  {v.thumbnail ? (
+                                    <img src={v.thumbnail} alt={`Stock clip ${j + 1}`}
+                                      className="w-full aspect-video object-cover" />
+                                  ) : (
+                                    <div className="w-full aspect-video bg-muted flex items-center justify-center">
+                                      <span className="text-xs text-muted-foreground">No preview</span>
+                                    </div>
+                                  )}
+                                  <div className="px-2 py-1 text-xs text-muted-foreground">
+                                    Video {j + 1} ({v.duration}s)
+                                  </div>
                                 </a>
                               ))}
                             </div>

@@ -113,7 +113,7 @@ function scanDirectAssets(
     });
   }
 
-  // Stock footage: output.footage[].videos[].url (complex nested)
+  // Stock footage: output.footage[].videos[] — prefer file_url > thumbnail > url
   if (step === "stock_footage" && Array.isArray(output.footage)) {
     let clipIndex = 0;
     output.footage.forEach((group) => {
@@ -121,11 +121,14 @@ function scanDirectAssets(
       if (Array.isArray(groupObj?.videos)) {
         groupObj.videos.forEach((v) => {
           const vid = v as Record<string, unknown>;
-          if (typeof vid?.url === "string" && clipIndex < 5) {
+          const assetUrl = (typeof vid?.file_url === "string" ? vid.file_url : null)
+            || (typeof vid?.thumbnail === "string" ? vid.thumbnail : null)
+            || (typeof vid?.url === "string" ? vid.url : null);
+          if (assetUrl && clipIndex < 5) {
             found.push({
               step,
               slotKey: `stock_clips[${clipIndex}].url`,
-              url: vid.url as string,
+              url: assetUrl,
               label: `Stock Clip ${clipIndex + 1}`,
             });
             clipIndex++;

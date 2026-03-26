@@ -351,8 +351,10 @@ const voiceover_generation: StepExecutor = async (ctx) => {
     offset += chunk.length;
   }
 
+  // Use timestamped filename to avoid browser/CDN caching on re-runs
+  const audioFilename = `voiceover_${Date.now()}.mp3`;
   const audioUrl = await uploadAsset(
-    ctx.project.id, "voiceover.mp3", audioBuffer.buffer, "audio/mpeg"
+    ctx.project.id, audioFilename, audioBuffer.buffer, "audio/mpeg"
   );
 
   if (!audioUrl) {
@@ -457,7 +459,7 @@ const stock_footage: StepExecutor = async (ctx) => {
     return `${q} ${styleKeywords}`;
   });
 
-  const results: { query: string; video_count: number; videos: { id: number; url: string; duration: number }[] }[] = [];
+  const results: { query: string; video_count: number; videos: { id: number; url: string; file_url: string; thumbnail: string; duration: number }[] }[] = [];
   for (const q of queries.slice(0, 5)) {
     let videos = await searchVideos(key, q, 3);
     // If no anime results, try with just "anime" appended
@@ -468,7 +470,21 @@ const stock_footage: StepExecutor = async (ctx) => {
     results.push({
       query: q,
       video_count: videos.length,
-      videos: videos.map(v => ({ id: v.id, url: v.url, duration: v.duration })),
+      videos: videos.map(v => {
+        // Get the best quality direct video file URL
+        const bestFile = v.video_files
+          ?.sort((a, b) => (b.width || 0) - (a.width || 0))
+          .find(f => f.quality === "hd") || v.video_files?.[0];
+        // Get the first thumbnail picture
+        const thumbnail = v.video_pictures?.[0]?.picture || "";
+        return {
+          id: v.id,
+          url: v.url, // Pexels page URL (for attribution)
+          file_url: bestFile?.link || v.url, // Direct playable video file
+          thumbnail, // Static preview image
+          duration: v.duration,
+        };
+      }),
     });
   }
 

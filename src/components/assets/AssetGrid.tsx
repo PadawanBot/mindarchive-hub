@@ -33,16 +33,19 @@ function resolveSlotUrl(output: Record<string, unknown>, step: string, slotKey: 
   }
 
   if (step === "stock_footage" && slotKey.includes("stock_clips") && Array.isArray(output.footage)) {
-    // Flatten footage[].videos[] into a flat clip list
-    const clips: string[] = [];
+    // Flatten footage[].videos[] into a flat clip list, prefer file_url > url
+    const clips: { fileUrl: string; thumbnail: string }[] = [];
     for (const group of output.footage as Record<string, unknown>[]) {
       if (Array.isArray(group?.videos)) {
         for (const v of group.videos as Record<string, unknown>[]) {
-          if (typeof v?.url === "string") clips.push(v.url);
+          const fileUrl = (typeof v?.file_url === "string" ? v.file_url : null) || (typeof v?.url === "string" ? v.url : "");
+          const thumbnail = typeof v?.thumbnail === "string" ? v.thumbnail : "";
+          if (fileUrl) clips.push({ fileUrl, thumbnail });
         }
       }
     }
-    if (idx >= 0 && idx < clips.length) return clips[idx];
+    // For video slots, prefer thumbnail for display (video files may have CORS issues)
+    if (idx >= 0 && idx < clips.length) return clips[idx].thumbnail || clips[idx].fileUrl;
   }
 
   if (step === "voiceover_generation" && slotKey === "audio_url") {
