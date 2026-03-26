@@ -1,7 +1,5 @@
 "use client";
 
-import { Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type { PipelineStep } from "@/types";
 import { AssetGrid } from "@/components/assets/AssetGrid";
 import { getSlotsForStep } from "@/lib/asset-validation";
@@ -23,23 +21,7 @@ interface StepOutputRendererProps {
 export function StepOutputRenderer({ step, label, text, output, projectId, onOutputChanged }: StepOutputRendererProps) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-muted-foreground">{label}</h3>
-        <div className="flex gap-1">
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => window.open(`/api/export?project_id=${projectId}&steps=${step}&format=md`, '_blank')}>
-            <Download className="h-3 w-3 mr-1" /> MD
-          </Button>
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => window.open(`/api/export?project_id=${projectId}&steps=${step}&format=txt`, '_blank')}>
-            TXT
-          </Button>
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => window.open(`/api/export?project_id=${projectId}&steps=${step}&format=json`, '_blank')}>
-            JSON
-          </Button>
-        </div>
-      </div>
+      <h3 className="text-sm font-semibold text-muted-foreground mb-2">{label}</h3>
 
       {/* Image Generation — show thumbnails */}
       {step === "image_generation" && output?.images && Array.isArray(output.images) ? (

@@ -512,6 +512,7 @@ export default function ProjectDetailPage() {
               onRunFrom={runFromStep}
               onRunSingle={runSingleStep}
               canRunSingle={canRunSingle(def)}
+              projectId={params.id as string}
             />
           ))}
         </CardContent>
@@ -535,6 +536,7 @@ export default function ProjectDetailPage() {
               onRunFrom={runFromStep}
               onRunSingle={runSingleStep}
               canRunSingle={canRunSingle(def)}
+              projectId={params.id as string}
             />
           ))}
         </CardContent>
