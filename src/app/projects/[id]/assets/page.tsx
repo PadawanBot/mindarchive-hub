@@ -100,12 +100,10 @@ export default function AssetLibraryPage() {
             Manage all assets for this project — upload, replace, or delete files per step.
           </p>
         </div>
-        {assets.length === 0 && !loading && (
-          <Button variant="outline" size="sm" onClick={backfillAssets} disabled={backfilling}>
-            <RefreshCw className={`h-4 w-4 mr-1 ${backfilling ? "animate-spin" : ""}`} />
-            {backfilling ? "Scanning..." : "Detect Existing Assets"}
-          </Button>
-        )}
+        <Button variant="outline" size="sm" onClick={backfillAssets} disabled={backfilling || loading}>
+          <RefreshCw className={`h-4 w-4 mr-1 ${backfilling ? "animate-spin" : ""}`} />
+          {backfilling ? "Scanning..." : "Sync Assets from Pipeline"}
+        </Button>
       </div>
 
       {/* Summary stats */}
