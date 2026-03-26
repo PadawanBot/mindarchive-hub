@@ -1,5 +1,5 @@
 /**
- * DELETE /api/assets/[id] — Delete a manual asset.
+ * DELETE /api/assets/[id] — Delete any asset (manual or generated).
  * Removes from storage, DB, and nullifies the step output field.
  */
 import { NextResponse } from "next/server";
@@ -18,14 +18,6 @@ export async function DELETE(
       return NextResponse.json(
         { success: false, error: "Asset not found" },
         { status: 404 }
-      );
-    }
-
-    // Only allow deleting manual assets
-    if (asset.source !== "manual") {
-      return NextResponse.json(
-        { success: false, error: "Only manually uploaded assets can be deleted" },
-        { status: 403 }
       );
     }
 
