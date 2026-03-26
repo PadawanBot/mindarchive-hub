@@ -5,7 +5,65 @@ import { generateImage } from "@/lib/providers/openai";
 import { generateVoiceover } from "@/lib/providers/elevenlabs";
 import { downloadAndStore, uploadAsset } from "@/lib/storage";
 import { searchVideos } from "@/lib/providers/pexels";
-import { generateVideoFromImage } from "@/lib/providers/runway";
+import { generateVideo } from "@/lib/providers/runway";
+
+// ─── Prompt sanitization for video generation ───
+
+const COPYRIGHTED_REPLACEMENTS: [RegExp, string][] = [
+  // Anime / manga characters
+  [/\bGoku\b/gi, "a warrior in an orange gi"],
+  [/\bVegeta\b/gi, "a proud rival warrior in battle armor"],
+  [/\bNaruto\b/gi, "a young ninja in an orange jumpsuit"],
+  [/\bSasuke\b/gi, "a dark-haired rival ninja"],
+  [/\bLuffy\b/gi, "a young pirate captain in a straw hat"],
+  [/\bRyuk\b/gi, "a skeletal death spirit"],
+  [/\bLight Yagami\b/gi, "a cunning student with a supernatural notebook"],
+  [/\bDeath Note\b/gi, "a supernatural notebook"],
+  [/\bDragon Ball\b/gi, "martial arts tournament"],
+  [/\bOne Piece\b/gi, "pirate adventure"],
+  [/\bSaiyan\b/gi, "powerful warrior race"],
+  [/\bKamehameha\b/gi, "massive energy beam attack"],
+  [/\bRasengan\b/gi, "swirling energy sphere"],
+  [/\bSharingan\b/gi, "mystical red eye power"],
+  // Western characters
+  [/\bSpider[- ]?Man\b/gi, "a masked hero in a red and blue suit"],
+  [/\bBatman\b/gi, "a dark caped vigilante"],
+  [/\bSuperman\b/gi, "a powerful hero in a red cape"],
+  [/\bIron Man\b/gi, "a hero in powered armor"],
+  [/\bThanos\b/gi, "a cosmic titan"],
+  [/\bDarth Vader\b/gi, "a dark armored villain"],
+  [/\bYoda\b/gi, "a small wise green elder"],
+  [/\bHarry Potter\b/gi, "a young wizard with round glasses"],
+  [/\bHogwarts\b/gi, "a magical castle school"],
+  // Game characters
+  [/\bMario\b/gi, "a mustachioed plumber in a red cap"],
+  [/\bLink\b(?=.*[Zz]elda| hero| sword)/gi, "a green-clad hero"],
+  [/\bPikachu\b/gi, "a small yellow electric creature"],
+  [/\bPok[eé]mon\b/gi, "collectible creatures"],
+  // Franchise names (broad)
+  [/\bMarvel\b/gi, "superhero"],
+  [/\bDC Comics\b/gi, "superhero"],
+  [/\bDisney\b/gi, "animated"],
+  [/\bStar Wars\b/gi, "space opera"],
+];
+
+/**
+ * Strip copyrighted character/franchise names from prompts and
+ * prepend a style prefix for consistent video generation.
+ */
+function sanitizePrompt(prompt: string, stylePrefix = "Animated 2D anime style. "): string {
+  let cleaned = prompt;
+  for (const [pattern, replacement] of COPYRIGHTED_REPLACEMENTS) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+  // Collapse any doubled spaces from replacements
+  cleaned = cleaned.replace(/  +/g, " ").trim();
+  // Prepend style prefix if not already present
+  if (!cleaned.toLowerCase().startsWith(stylePrefix.toLowerCase().trim().toLowerCase())) {
+    cleaned = stylePrefix + cleaned;
+  }
+  return cleaned;
+}
 
 // ─── Context passed to every executor ───
 
@@ -443,15 +501,15 @@ const hero_scenes: StepExecutor = async (ctx) => {
         dalle_prompt: cue.replace(/\[VISUAL CUE:\s*/, "").replace(/\]$/, "").trim(),
       }));
     } else {
-      // Rich fallback with cinematic description
+      // Generic cinematic fallback — no copyrighted references
       scenePrompts = [
         {
           section: "Cold Open",
-          dalle_prompt: `Cinematic anime-style dramatic scene. A powerful warrior in an orange martial arts uniform discovers a mysterious black notebook glowing with dark supernatural energy. The scene is lit with golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
+          dalle_prompt: `Cinematic dramatic opening scene. A lone figure stands at the edge of a vast landscape, golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
         },
         {
           section: "Climax",
-          dalle_prompt: `Dramatic confrontation scene in anime cinematic style. Two powerful figures face each other — one radiating golden heroic energy, the other shrouded in dark supernatural shadows with an ominous notebook between them. Lightning crackles, the ground cracks with power. Intense emotional close-up, movie quality. Topic: ${ctx.project.topic}`,
+          dalle_prompt: `Dramatic confrontation scene. Two powerful figures face each other — one radiating golden energy, the other shrouded in dark shadows. Lightning crackles, intense emotional close-up, movie quality. Topic: ${ctx.project.topic}`,
         },
       ];
     }
@@ -463,8 +521,8 @@ const hero_scenes: StepExecutor = async (ctx) => {
 
   for (const scene of toProcess) {
     try {
-      const promptText = scene.dalle_prompt.slice(0, 1000);
-      const result = await generateVideoFromImage(key, "", promptText);
+      const promptText = sanitizePrompt(scene.dalle_prompt).slice(0, 1000);
+      const result = await generateVideo(key, promptText);
       scenes.push({
         section: scene.section || "Hero Scene",
         promptText,
