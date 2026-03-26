@@ -1,53 +1,45 @@
 import RunwayML from "@runwayml/sdk";
 
 /**
- * Generate a video clip from a text prompt using Runway Gen-4 Turbo.
- * Uses text-to-video mode (no image needed — avoids expired URL issues).
- * Optionally accepts an image URL for image-to-video mode.
+ * Generate a video clip from a text prompt using Runway.
+ * Uses textToVideo API — no image needed.
+ *
+ * Available models:
+ * - "veo3"       — 8s clips, high quality (Google Veo 3)
+ * - "veo3.1"     — 4/6/8s clips, optional audio
+ * - "veo3.1_fast" — faster variant of veo3.1
+ * - "gen4.5"     — 2-10s clips (Runway native)
  */
 export async function generateVideo(
   apiKey: string,
   promptText: string,
   options?: {
-    imageUrl?: string;
-    duration?: 5 | 10;
-    model?: string;
-    ratio?: string;
+    model?: "veo3" | "veo3.1" | "veo3.1_fast" | "gen4.5";
+    duration?: number;
+    ratio?: "1280:720" | "720:1280" | "1080:1920" | "1920:1080";
   }
 ): Promise<{ taskId: string }> {
   const client = new RunwayML({ apiKey });
-  const duration = options?.duration || 5;
+  const model = options?.model || "veo3";
   const ratio = options?.ratio || "1280:720";
-  const model = options?.model || "gen3a_turbo";
 
-  // Build the request based on whether we have an image
-  const params: Record<string, unknown> = {
+  const task = await client.textToVideo.create({
     model,
-    promptText: promptText.slice(0, 512),
-    duration,
+    promptText: promptText.slice(0, 1000),
+    duration: model === "veo3" ? 8 : (options?.duration || 8),
     ratio,
-  };
+  } as Parameters<typeof client.textToVideo.create>[0]);
 
-  // Only include promptImage if we have a valid, non-expired URL
-  if (options?.imageUrl) {
-    params.promptImage = options.imageUrl;
-  }
-
-  const task = await client.imageToVideo.create(
-    params as unknown as Parameters<typeof client.imageToVideo.create>[0]
-  );
   return { taskId: task.id };
 }
 
-// Keep backward compatibility
+// Backward-compatible alias
 export async function generateVideoFromImage(
   apiKey: string,
-  imageUrl: string,
+  _imageUrl: string,
   promptText: string,
-  duration: 5 | 10 = 5,
 ): Promise<{ taskId: string }> {
-  // Use text-to-video by default (more reliable — avoids expired image URLs)
-  return generateVideo(apiKey, promptText, { duration, ratio: "1280:720" });
+  return generateVideo(apiKey, promptText);
 }
 
 export async function checkTaskStatus(
