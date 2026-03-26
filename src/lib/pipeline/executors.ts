@@ -447,9 +447,24 @@ const stock_footage: StepExecutor = async (ctx) => {
 
   if (queries.length === 0) queries = [ctx.project.topic];
 
+  // Append anime/cartoon style keywords based on channel profile
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const styleKeywords = (ctx.profile as any)?.visual_style as string || "anime cartoon animated";
+  queries = queries.map(q => {
+    // Only append if the query doesn't already contain style terms
+    const lower = q.toLowerCase();
+    if (lower.includes("anime") || lower.includes("cartoon") || lower.includes("animated")) return q;
+    return `${q} ${styleKeywords}`;
+  });
+
   const results: { query: string; video_count: number; videos: { id: number; url: string; duration: number }[] }[] = [];
   for (const q of queries.slice(0, 5)) {
-    const videos = await searchVideos(key, q, 3);
+    let videos = await searchVideos(key, q, 3);
+    // If no anime results, try with just "anime" appended
+    if (videos.length === 0) {
+      const fallbackQuery = q.replace(styleKeywords, "").trim() + " anime";
+      videos = await searchVideos(key, fallbackQuery, 3);
+    }
     results.push({
       query: q,
       video_count: videos.length,
