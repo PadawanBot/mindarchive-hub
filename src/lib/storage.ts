@@ -13,7 +13,10 @@ function getStorageClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  if (!url || !key) {
+    console.warn("[storage] Missing SUPABASE_URL or key — storage unavailable");
+    return null;
+  }
   return createClient(url, key);
 }
 
@@ -38,12 +41,15 @@ export async function uploadAsset(
       const filePath = path.join(dir, filename);
       await fs.writeFile(filePath, Buffer.from(data));
       return `/assets/${projectId}/${filename}`;
-    } catch {
+    } catch (err) {
+      console.error("[storage] Local fallback write failed:", err);
       return null;
     }
   }
 
   const storagePath = `${projectId}/${filename}`;
+  const dataSize = data instanceof ArrayBuffer ? data.byteLength : data.length;
+  console.log(`[storage] Uploading ${storagePath} (${(dataSize / 1024).toFixed(1)}KB, ${mimeType})`);
 
   const { error } = await sb.storage
     .from(BUCKET)
@@ -53,17 +59,19 @@ export async function uploadAsset(
     });
 
   if (error) {
-    console.error(`[storage] Upload failed: ${error.message}`);
+    console.error(`[storage] Upload failed for ${storagePath}: ${error.message}`);
     return null;
   }
 
   const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(storagePath);
+  console.log(`[storage] Upload success: ${urlData.publicUrl.slice(0, 80)}...`);
   return urlData.publicUrl;
 }
 
 /**
  * Download a URL and upload its contents to Supabase Storage.
  * Useful for persisting ephemeral URLs (DALL-E images, etc.)
+ * Returns the Supabase public URL, or null on failure.
  */
 export async function downloadAndStore(
   projectId: string,
@@ -72,11 +80,17 @@ export async function downloadAndStore(
   mimeType: string
 ): Promise<string | null> {
   try {
-    const response = await fetch(sourceUrl);
-    if (!response.ok) return null;
+    console.log(`[storage] Downloading from ${sourceUrl.slice(0, 80)}...`);
+    const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) {
+      console.error(`[storage] Download failed: ${response.status} ${response.statusText}`);
+      return null;
+    }
     const buffer = await response.arrayBuffer();
+    console.log(`[storage] Downloaded ${(buffer.byteLength / 1024).toFixed(1)}KB, uploading as ${filename}`);
     return uploadAsset(projectId, filename, buffer, mimeType);
-  } catch {
+  } catch (err) {
+    console.error(`[storage] downloadAndStore failed:`, err);
     return null;
   }
 }

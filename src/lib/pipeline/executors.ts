@@ -355,6 +355,10 @@ const voiceover_generation: StepExecutor = async (ctx) => {
     ctx.project.id, "voiceover.mp3", audioBuffer.buffer, "audio/mpeg"
   );
 
+  if (!audioUrl) {
+    throw new Error("Failed to upload voiceover to Supabase Storage. Check storage bucket config via POST /api/setup");
+  }
+
   const wordCount = narration.split(/\s+/).length;
   const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
 
@@ -407,8 +411,12 @@ const image_generation: StepExecutor = async (ctx) => {
       const storedUrl = await downloadAndStore(
         ctx.project.id, `dalle-scene-${i + 1}.png`, img.url, "image/png"
       );
+      if (!storedUrl) {
+        console.error(`[image_generation] Failed to persist DALL-E image ${i + 1} to storage, using temp URL`);
+      }
       return { prompt: p, url: storedUrl || img.url, revised_prompt: img.revisedPrompt, stored: !!storedUrl };
-    } catch {
+    } catch (err) {
+      console.error(`[image_generation] Image ${i + 1} failed:`, err);
       return null;
     }
   });
