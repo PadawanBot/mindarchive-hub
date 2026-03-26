@@ -206,7 +206,14 @@ export function AssetSlot({ projectId, slotDef, currentUrl, onAssetChanged }: As
               />
             )}
             {slotDef.mimeCategory === "video" && (
-              <video src={currentUrl} className="w-full h-full object-cover" muted />
+              // If URL is an image (thumbnail preview), render as <img>; otherwise <video>
+              /\.(jpe?g|png|webp)(\?|$)/i.test(currentUrl) ? (
+                <img src={currentUrl} alt={slotDef.label} className="w-full h-full object-cover"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              ) : (
+                <video src={currentUrl} className="w-full h-full object-cover" muted
+                  onError={(e) => { (e.target as HTMLVideoElement).style.display = "none"; }} />
+              )
             )}
             {slotDef.mimeCategory === "audio" && (
               <div className="flex flex-col items-center gap-2 p-4 w-full">
