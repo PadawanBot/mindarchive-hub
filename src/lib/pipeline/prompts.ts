@@ -80,8 +80,16 @@ Output the complete narration script with visual tags after each paragraph.`,
     case "hook_engineering": {
       const script = (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       return {
-        system: "You are a viral hook specialist for YouTube. Generate 3 alternative hooks optimized for first-5-second retention. Each hook should use a different technique. Output as JSON array with fields: hook_text, technique (question/statistic/bold_claim/story/contradiction), why_it_works, estimated_retention_boost_percent.",
-        user: `Generate 3 viral hooks for: "${ctx.project.topic}"\n\nCurrent script opening:\n${script.slice(0, 800)}\n\nChannel voice: ${ctx.profile?.voice_style || "professional"}\nTarget audience: ${ctx.profile?.target_audience || "general"}`,
+        system: `You are a viral hook specialist for YouTube. Generate 10 viral hooks that:
+- Trigger curiosity gaps
+- Use power words like "before", "exposed", "the last time"
+- Work as both voiceover and thumbnail text
+- Fit under 100 characters
+- Have pattern-break potential
+
+Output as JSON array with fields: hook_text, technique (question/statistic/bold_claim/story/contradiction), why_it_works, estimated_retention_boost_percent.
+Rank by emotional intensity — Hook #1 should be the strongest cold open candidate.`,
+        user: `Generate 10 viral hooks for: "${ctx.project.topic}"\n\nCurrent script opening:\n${script.slice(0, 800)}\n\nChannel voice: ${ctx.profile?.voice_style || "professional"}\nTarget audience: ${ctx.profile?.target_audience || "general"}`,
         maxTokens: 4096,
       };
     }
