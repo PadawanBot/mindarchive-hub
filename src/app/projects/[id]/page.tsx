@@ -130,9 +130,16 @@ export default function ProjectDetailPage() {
           body: JSON.stringify({ project_id: params.id, step: stepId, force }),
         });
         const text = await res.text();
-        if (!text) { setError(`Empty response for step ${stepId}`); return false; }
+        if (!text) {
+          // Reset stuck "running" state on empty response (e.g. 504 timeout)
+          await fetch("/api/pipeline/step/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: params.id, steps: [stepId] }) }).catch(() => {});
+          setError(`Empty response for step ${stepId} — likely timed out`);
+          return false;
+        }
         let data;
         try { data = JSON.parse(text); } catch {
+          // Reset stuck "running" state on non-JSON response (e.g. 504 timeout)
+          await fetch("/api/pipeline/step/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: params.id, steps: [stepId] }) }).catch(() => {});
           setError(`Step "${stepId}" returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
           return false;
         }
