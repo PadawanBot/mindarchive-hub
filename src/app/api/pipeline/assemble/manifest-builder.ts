@@ -60,9 +60,23 @@ function parseTransition(t: string | undefined): TransitionType {
 
 function safeParse<T>(json: string | undefined): T | null {
   if (!json) return null;
+  // Strip markdown code fences that LLMs often wrap JSON in
+  let cleaned = json.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
   try {
-    return JSON.parse(json);
+    return JSON.parse(cleaned);
   } catch {
+    // Try to extract JSON array or object from the string
+    const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+    if (match) {
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
