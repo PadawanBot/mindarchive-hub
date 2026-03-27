@@ -3,6 +3,7 @@ import ffmpeg from "fluent-ffmpeg";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { v4 as uuid } from "uuid";
+import { uploadToR2 } from "./r2-upload";
 
 import type {
   AssemblyManifestV2,
@@ -679,49 +680,23 @@ async function uploadResultV2(
   audioDuration: number,
   onProgress: (pct: number) => void
 ): Promise<AssemblyResultV2> {
-  const sb = createClient(manifest.supabaseUrl, manifest.supabaseKey);
-  const bucket = "project-assets";
+  // Upload final videos to Cloudflare R2 (no size limit, unlike Supabase 50MB)
+  const landscapeKey = `videos/${manifest.projectId}/final-video.mp4`;
+  const portraitKey = `videos/${manifest.projectId}/final-video-portrait.mp4`;
 
-  // Upload landscape
-  const landscapeBuffer = await fs.readFile(landscapePath);
-  const landscapeStoragePath = `${manifest.projectId}/final-video.mp4`;
-
-  const { error: lErr } = await sb.storage
-    .from(bucket)
-    .upload(landscapeStoragePath, landscapeBuffer, {
-      contentType: "video/mp4",
-      upsert: true,
-    });
-  if (lErr) throw new Error(`Landscape upload failed: ${lErr.message}`);
-
-  const { data: lData } = sb.storage
-    .from(bucket)
-    .getPublicUrl(landscapeStoragePath);
-
+  const landscapeUrl = await uploadToR2(landscapePath, landscapeKey, "video/mp4");
   onProgress(95);
 
-  // Upload portrait
-  const portraitBuffer = await fs.readFile(portraitPath);
-  const portraitStoragePath = `${manifest.projectId}/final-video-portrait.mp4`;
-
-  const { error: pErr } = await sb.storage
-    .from(bucket)
-    .upload(portraitStoragePath, portraitBuffer, {
-      contentType: "video/mp4",
-      upsert: true,
-    });
-  if (pErr) throw new Error(`Portrait upload failed: ${pErr.message}`);
-
-  const { data: pData } = sb.storage
-    .from(bucket)
-    .getPublicUrl(portraitStoragePath);
-
+  const portraitUrl = await uploadToR2(portraitPath, portraitKey, "video/mp4");
   onProgress(100);
 
+  const landscapeStat = await fs.stat(landscapePath);
+  const portraitStat = await fs.stat(portraitPath);
+
   return {
-    landscapeUrl: lData.publicUrl,
-    portraitUrl: pData.publicUrl,
+    landscapeUrl,
+    portraitUrl,
     durationSeconds: Math.round(audioDuration),
-    fileSizeBytes: landscapeBuffer.length + portraitBuffer.length,
+    fileSizeBytes: landscapeStat.size + portraitStat.size,
   };
 }
