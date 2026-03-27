@@ -40,8 +40,39 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
       const durMin = ctx.format?.duration_min ? Math.round(ctx.format.duration_min / 60) : 6;
       const durMax = ctx.format?.duration_max ? Math.round(ctx.format.duration_max / 60) : 10;
       return {
-        system: `You are an expert YouTube scriptwriter for faceless channels. Write engaging, hook-driven scripts. CRITICAL RULES:\n- The voiceover MP3 is the production clock — word count drives runtime\n- MOTION_GRAPHIC tags are visual supplements ONLY — never replace narration\n- No text in DALL-E prompts — Pillow handles all text overlays\n- Format preset parameters drive content generation\n\nVoice style: ${ctx.profile?.voice_style || "professional"}`,
-        user: `Write a full YouTube script for: "${ctx.project.topic}"\n\nResearch data:\n${research}\n\nFORMAT REQUIREMENTS:\n- Sections: ${sections}\n- Target word count: ${wordMin}-${wordMax} words\n- Target runtime: ${durMin}-${durMax} minutes at ${wpm} WPM\n- Include [VISUAL CUE: description] tags between sections describing what the viewer sees\n- Start with a strong hook (first 5 seconds)\n- End with a clear CTA\n\nOutput the complete narration script with section headers and [VISUAL CUE] tags.`,
+        system: `You are an expert YouTube scriptwriter for faceless documentary channels. Write engaging, hook-driven scripts in the style of a Netflix episode.
+
+VISUAL TAG SYSTEM — after each paragraph of narration, add ONE visual tag on a new line:
+[DALLE: <cinematic still image — photorealistic, 4K documentary style, no text in frame>]
+[RUNWAY: <5-10s motion video — hero/peak emotional moment only, max 3-5 total per video>]
+[STOCK: <2-3 keyword search terms for real-world footage>]
+[MOTION_GRAPHIC: <text or data content to display as a card>]
+
+Use [DALLE] as the default for most scenes. Use [RUNWAY] ONLY for the most cinematic emotional peaks (max 3-5 per video). Use [STOCK] for real-world footage, environments, archival scenes. Use [MOTION_GRAPHIC] for statistics, titles, labels, checklists — any text on screen.
+
+CRITICAL RULES:
+- The voiceover MP3 is the production clock — word count drives runtime
+- [MOTION_GRAPHIC] is a VISUAL SUPPLEMENT only — never replaces narration. Every data point, checklist item, and tactic MUST be fully narrated. The card reinforces narration, not replaces it.
+- Never put text in DALLE prompts — Pillow handles all text overlays
+- DALLE style: "cinematic, photorealistic, 4K documentary style, no text in frame"
+- Include a cold open that hooks in 7 seconds
+- 3-act structure with emotional arc (curiosity, conflict, payoff)
+
+Voice style: ${ctx.profile?.voice_style || "professional"}`,
+        user: `Write a YouTube documentary script about: "${ctx.project.topic}"
+
+Research data:
+${research}
+
+FORMAT REQUIREMENTS:
+- Sections: ${sections}
+- Target word count: ${wordMin}-${wordMax} words
+- Target runtime: ${durMin}-${durMax} minutes at ${wpm} WPM
+- Each paragraph = one visual scene with a visual tag on the next line
+- Start with a strong hook (first 7 seconds)
+- End with a clear CTA
+
+Output the complete narration script with visual tags after each paragraph.`,
         maxTokens: 4096,
       };
     }
@@ -65,10 +96,28 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
     }
 
     case "visual_direction": {
-      const script = (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
+      const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
+        || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       return {
-        system: "You are a visual director for faceless YouTube videos. Create a visual plan with DALL-E image prompts and Pexels search queries for each script section. CRITICAL: Never include text in DALL-E prompts — all text overlays are handled by Pillow in post-production. MOTION_GRAPHIC tags are visual supplements only. Output as JSON with fields: scenes (array of {section, timestamp_approx, dalle_prompt, pexels_query, motion_graphic_overlay, duration_seconds}).",
-        user: `Create visual direction for this script:\n\n${script.slice(0, 3000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
+        system: `You are a visual director for faceless YouTube documentary videos. For each scene/paragraph in the script, generate detailed visual direction and a production spec.
+
+For each scene, describe:
+- Scene setup (environment, time of day, tone)
+- Camera angle, lighting, and composition
+- Style consistency (cinematic, documentary, stylized realism)
+- Colour grade direction
+
+Then assign ONE tag_type per scene and provide the matching production spec:
+- "DALLE": DALL-E 3 prompt — MUST be "cinematic, photorealistic, 4K documentary style, no text in frame". Include Ken Burns direction (zoom amount, duration, direction).
+- "RUNWAY": Runway Gen-3 motion prompt — 5-10 seconds, cinematic movement. Include motion type. Max 3-5 RUNWAY scenes per video — use only for peak emotional/cinematic moments.
+- "STOCK": 2-3 Pexels search keywords for real-world footage (nature, cities, people, abstract — NO fictional characters).
+- "MOTION_GRAPHIC": Text content + layout type (title_card / list_card / checklist / end_card) + colour scheme. Use for titles, statistics, checklists, end cards.
+
+Use DALLE as the default. RUNWAY only for emotional peaks. STOCK for real-world B-roll. MOTION_GRAPHIC for text/data cards.
+
+Output as a JSON array:
+[{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]`,
+        user: `Create visual direction for this script:\n\n${script.slice(0, 4000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
         maxTokens: 4096,
       };
     }
@@ -76,8 +125,8 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
     case "blend_curator": {
       const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
       return {
-        system: "You are a B-roll curation specialist. For each scene, decide the optimal blend of AI-generated imagery vs stock footage vs motion graphics. Output as JSON array with fields: scene_id, primary_source (dalle/pexels/motion_graphic), secondary_source, blend_ratio, pexels_search_queries (array), transition_type (cut/dissolve/zoom/slide).",
-        user: `Curate the visual blend for this video:\n\nVisual direction:\n${visuals.slice(0, 3000)}\n\nOptimize for engagement and visual variety.`,
+        system: "You are a B-roll curation specialist. For each scene, decide the optimal blend of AI-generated imagery vs stock footage vs motion graphics. Output as JSON array with fields: scene_id, primary_source (dalle/pexels/runway/motion_graphic), secondary_source, blend_ratio, pexels_search_queries (array), transition_type (cut/dissolve/zoom/slide).",
+        user: `Curate the visual blend for this video:\n\nVisual direction:\n${visuals.slice(0, 3000)}\n\nOptimize for engagement and visual variety. Ensure at least 2-3 scenes use stock footage and 2-4 scenes use runway for emotional peaks.`,
         maxTokens: 4096,
       };
     }
@@ -93,8 +142,12 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
       const script = (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       const hooks = (getPrevOutput(ctx.previousSteps, "hook_engineering") as { hooks?: string })?.hooks || "";
       return {
-        system: "You are a YouTube script editor. Refine the script for maximum engagement, clarity, and retention. Integrate the best hook from the alternatives. Ensure smooth transitions, eliminate filler, strengthen the narrative arc, and verify word count stays in target range. Output the complete refined script.",
-        user: `Refine this script:\n\n${script}\n\nAlternative hooks to consider:\n${hooks}\n\nRequirements:\n- Integrate the strongest hook\n- Strengthen all transitions\n- Eliminate filler words\n- Keep [VISUAL CUE] tags\n- Maintain target word count\n\nOutput the complete refined script.`,
+        system: `You are a YouTube script editor. Refine the script for maximum engagement, clarity, and retention. Integrate the best hook from the alternatives. Ensure smooth transitions, eliminate filler, strengthen the narrative arc, and verify word count stays in target range.
+
+CRITICAL: Preserve all visual tags ([DALLE: ...], [RUNWAY: ...], [STOCK: ...], [MOTION_GRAPHIC: ...]) exactly as they appear. Do NOT change tag types or remove tags. Do NOT replace [MOTION_GRAPHIC] visual supplements with narration or vice versa.
+
+Output the complete refined script with all visual tags intact.`,
+        user: `Refine this script:\n\n${script}\n\nAlternative hooks to consider:\n${hooks}\n\nRequirements:\n- Integrate the strongest hook\n- Strengthen all transitions\n- Eliminate filler words\n- Keep ALL visual tags ([DALLE:], [RUNWAY:], [STOCK:], [MOTION_GRAPHIC:]) intact\n- Maintain target word count\n\nOutput the complete refined script.`,
         maxTokens: 4096,
       };
     }
@@ -107,20 +160,22 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
       return {
         system: `You are a video timing engineer. Map each scene to precise timestamps based on word count and WPM. The voiceover MP3 is the production clock.
 
-CRITICAL: Output as a JSON array where each entry has EXACTLY these fields:
-- scene (integer, starting from 1)
-- tag_type (one of: "DALLE", "RUNWAY", "STOCK", "MOTION_GRAPHIC" — based on the blend curator's primary_source for that scene)
-- duration (number, seconds — derived from word count / WPM)
-- label (string — section name from the script)
-- start_time_seconds (number)
-- end_time_seconds (number)
-- transition_in (string: "fade", "cut", "dissolve")
-- transition_out (string: "fade", "cut", "dissolve")
-- notes (string — timing notes for the editor)
-
-Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
-Duration of each scene is derived from the word count of that section at the given WPM.`,
-        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan:\n${visuals.slice(0, 1500)}\n\nBlend curator plan (determines tag_type per scene):\n${blend.slice(0, 1500)}`,
+CRITICAL RULES:
+1. Output ONLY a JSON array — no markdown fences, no commentary.
+2. Each entry must have EXACTLY these fields:
+   - scene (integer, starting from 1)
+   - tag_type (one of: "DALLE", "RUNWAY", "STOCK", "MOTION_GRAPHIC" — MUST match the tag_type from the visual direction plan for that scene. Do NOT change asset assignments.)
+   - duration (number, seconds — derived from word count / WPM)
+   - label (string — section name from the script)
+   - start_time_seconds (number)
+   - end_time_seconds (number)
+   - transition_in (string: "fade", "cut", "dissolve")
+   - transition_out (string: "fade", "cut", "dissolve")
+   - visual_asset_id (string — format: TAG_NNN_short_description, e.g. "DALLE_001_hands_reaching_table", "RUNWAY_003_eye_macro_pullback", "STOCK_012_milgram_experiment", "MOTION_GRAPHIC_005_title_card")
+3. Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
+4. Duration of each scene is derived from the word count of that section at the given WPM.
+5. PRESERVE the tag_type assignments from the visual direction — do not make everything DALLE.`,
+        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan (PRESERVE the tag_type assignments):\n${visuals.slice(0, 2000)}\n\nBlend curator plan:\n${blend.slice(0, 1000)}`,
         maxTokens: 4096,
       };
     }
