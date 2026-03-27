@@ -106,6 +106,7 @@ export interface Project {
   steps?: StepResult[];
   total_cost_cents: number;
   output_url?: string;
+  output_portrait_url?: string;
   script_data?: Record<string, unknown> | null;
   topic_data?: Record<string, unknown> | null;
   visual_data?: Record<string, unknown> | null;

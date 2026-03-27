@@ -1,5 +1,5 @@
 import express from "express";
-import { assembleVideo } from "./assembler";
+import { assembleVideo, assembleVideoV2 } from "./assembler";
 import { v4 as uuid } from "uuid";
 
 const app = express();
@@ -12,6 +12,7 @@ interface Job {
   status: "queued" | "downloading" | "rendering" | "uploading" | "completed" | "failed";
   progress: number;
   outputUrl?: string;
+  portraitUrl?: string;
   error?: string;
   startedAt: string;
   completedAt?: string;
@@ -58,40 +59,74 @@ app.post("/assemble", async (req, res) => {
   jobs.set(jobId, job);
 
   // Start assembly in background
+  const isV2 = manifest.version === 2;
+  console.log(`Job ${jobId}: starting ${isV2 ? "v2 timeline" : "v1 legacy"} assembly`);
+
   (async () => {
     try {
       job.status = "downloading";
-      job.progress = 10;
+      job.progress = 5;
 
-      const result = await assembleVideo(manifest, (progress) => {
+      const onProgress = (progress: number) => {
         job.progress = progress;
-        if (progress < 50) job.status = "downloading";
+        if (progress < 30) job.status = "downloading";
         else if (progress < 90) job.status = "rendering";
         else job.status = "uploading";
-      });
+      };
 
-      job.status = "completed";
-      job.progress = 100;
-      job.outputUrl = result.outputUrl;
-      job.completedAt = new Date().toISOString();
+      if (isV2) {
+        const result = await assembleVideoV2(manifest, onProgress);
 
-      // Callback to Vercel
-      if (callbackUrl) {
-        try {
-          await fetch(callbackUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              jobId,
-              projectId: manifest.projectId,
-              status: "completed",
-              outputUrl: result.outputUrl,
-              durationSeconds: result.durationSeconds,
-              fileSizeBytes: result.fileSizeBytes,
-            }),
-          });
-        } catch (err) {
-          console.error("Callback failed:", err);
+        job.status = "completed";
+        job.progress = 100;
+        job.outputUrl = result.landscapeUrl;
+        job.portraitUrl = result.portraitUrl;
+        job.completedAt = new Date().toISOString();
+
+        if (callbackUrl) {
+          try {
+            await fetch(callbackUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jobId,
+                projectId: manifest.projectId,
+                status: "completed",
+                outputUrl: result.landscapeUrl,
+                portraitUrl: result.portraitUrl,
+                durationSeconds: result.durationSeconds,
+                fileSizeBytes: result.fileSizeBytes,
+              }),
+            });
+          } catch (err) {
+            console.error("Callback failed:", err);
+          }
+        }
+      } else {
+        const result = await assembleVideo(manifest, onProgress);
+
+        job.status = "completed";
+        job.progress = 100;
+        job.outputUrl = result.outputUrl;
+        job.completedAt = new Date().toISOString();
+
+        if (callbackUrl) {
+          try {
+            await fetch(callbackUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jobId,
+                projectId: manifest.projectId,
+                status: "completed",
+                outputUrl: result.outputUrl,
+                durationSeconds: result.durationSeconds,
+                fileSizeBytes: result.fileSizeBytes,
+              }),
+            });
+          } catch (err) {
+            console.error("Callback failed:", err);
+          }
         }
       }
     } catch (err) {

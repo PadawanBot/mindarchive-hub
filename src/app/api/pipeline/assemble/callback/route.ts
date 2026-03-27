@@ -4,7 +4,7 @@ import type { Project } from "@/types";
 
 export async function POST(request: Request) {
   try {
-    const { projectId, status, outputUrl, durationSeconds, fileSizeBytes, error } = await request.json();
+    const { projectId, status, outputUrl, portraitUrl, durationSeconds, fileSizeBytes, error } = await request.json();
 
     const project = await getById<Project>("projects", projectId);
     if (!project) {
@@ -14,12 +14,14 @@ export async function POST(request: Request) {
     if (status === "completed" && outputUrl) {
       await update<Project>("projects", projectId, {
         output_url: outputUrl,
+        ...(portraitUrl ? { output_portrait_url: portraitUrl } : {}),
         metadata: {
           ...((project.metadata as Record<string, unknown>) || {}),
           assembly_status: "completed",
           assembly_duration_seconds: durationSeconds,
           assembly_file_size_bytes: fileSizeBytes,
           assembly_completed_at: new Date().toISOString(),
+          assembly_portrait_url: portraitUrl || null,
         },
       } as Partial<Project>);
     } else {
