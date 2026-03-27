@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     const model = profile?.llm_model || settings.default_model || settings.default_llm_model || "claude-sonnet-4-6";
 
     // Route long-running LLM steps to EC2 worker (no timeout constraint)
-    const WORKER_ROUTED_STEPS = ["visual_direction", "blend_curator", "timing_sync"];
+    const WORKER_ROUTED_STEPS = ["script_writing", "script_refinement", "visual_direction", "blend_curator", "timing_sync"];
     const workerUrl = process.env.WORKER_URL;
 
     if (WORKER_ROUTED_STEPS.includes(step) && workerUrl && provider === "anthropic") {
