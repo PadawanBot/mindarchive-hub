@@ -496,7 +496,7 @@ export async function assembleVideoV2(
     onProgress(35);
 
     // 2b. Build combined audio: brand music (8s) + voiceover
-    const combinedAudioPath = path.join(workDir, "combined_audio.mp3");
+    const combinedAudioPath = path.join(workDir, "combined_audio.aac");
 
     if (hasBrandMusic) {
       await buildCombinedAudio(
@@ -506,7 +506,7 @@ export async function assembleVideoV2(
       );
     } else {
       // No brand music — create 8s of silence + voiceover
-      const silencePath = path.join(workDir, "silence.mp3");
+      const silencePath = path.join(workDir, "silence.aac");
       const { execFile: execFileSync } = await import("child_process");
       const { promisify } = await import("util");
       const exec = promisify(execFileSync);
