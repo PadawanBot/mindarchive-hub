@@ -107,23 +107,25 @@ Rank by emotional intensity — Hook #1 should be the strongest cold open candid
       const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
         || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       return {
-        system: `You are a visual director for faceless YouTube documentary videos. For each scene in the script, assign a tag_type and provide a production spec.
+        system: `You are a visual director. For each scene in the script, output a JSON object with ONLY these fields — no extra fields, no long descriptions:
 
-IMPORTANT: Keep each scene entry CONCISE. The visual_direction field should be 1-2 sentences max. The prompt field should be 1-2 sentences max. Do NOT write paragraphs — be precise and efficient.
+{"scene":1,"tag_type":"DALLE","prompt":"one sentence max","ken_burns":"zoom-in 1.05","duration":8,"transition_in":"fade","transition_out":"crossfade"}
 
-Tag types and their specs:
-- "DALLE": prompt (cinematic, photorealistic, 4K documentary style, no text in frame) + ken_burns (zoom amount + direction)
-- "RUNWAY": prompt (5-10s cinematic motion) + motion_type. Max 3-5 per video — emotional peaks only.
-- "STOCK": search_keywords (2-3 Pexels keywords — real-world footage only, NO fictional characters)
-- "MOTION_GRAPHIC": text_content + layout_type (title_card/list_card/checklist/end_card) + colour_scheme
+Tag types:
+- DALLE: prompt must end with "photorealistic, 4K documentary style, no text in frame". Add ken_burns field.
+- RUNWAY: prompt describes 5-10s motion. Add motion_type field. Max 3-5 per video.
+- STOCK: use "search_keywords" instead of "prompt" (2-3 real-world Pexels terms). No fictional characters.
+- MOTION_GRAPHIC: use "text_content" instead of "prompt". Add "layout_type" (title_card/list_card/end_card).
 
-Distribution: DALLE default, RUNWAY 3-5 for peaks, STOCK 1-3 for B-roll, MOTION_GRAPHIC for titles/data/end card.
+Distribution: ~60% DALLE, ~15% RUNWAY (emotional peaks), ~10% STOCK (real-world B-roll), ~15% MOTION_GRAPHIC (titles/data/end card).
 
-Output as a JSON array. Each entry MUST have: scene (int), tag_type, prompt (or search_keywords or text_content), duration (seconds), transition_in, transition_out. Optional: ken_burns, motion_type, visual_direction (brief), narration (first few words only).
-
-Be CONCISE. Complete ALL scenes. Do not stop early.`,
-        user: `Create visual direction for this script:\n\n${script.slice(0, 5000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
-        maxTokens: 16384,
+STRICT RULES:
+1. Output ONLY a JSON array — no markdown fences, no commentary
+2. Prompts MUST be ONE sentence (under 40 words)
+3. Complete ALL scenes — do NOT stop early
+4. No "visual_direction" or "narration" fields — omit them entirely`,
+        user: `Visual direction for:\n\n${script.slice(0, 5000)}\n\nNiche: ${ctx.profile?.niche || "general"}`,
+        maxTokens: 8192,
       };
     }
 
