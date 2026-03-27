@@ -391,11 +391,41 @@ export async function assembleVideoV2(
   const clipsDir = path.join(workDir, "clips");
   await fs.mkdir(clipsDir, { recursive: true });
 
+  if (!manifest.output) {
+    throw new Error("manifest.output is required for V2 assembly — check the manifest builder on Vercel");
+  }
+
   const { fps, crf, preset } = manifest.output;
   const landscape = manifest.output.landscape;
   const portrait = manifest.output.portrait;
 
   try {
+    // ── Phase 0: Save manifest + build plan for debugging ──
+    await fs.writeFile(
+      path.join(workDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2)
+    );
+
+    const plan = manifest.scenes.map((s) => ({
+      sceneIndex: s.sceneIndex,
+      type: s.type,
+      label: s.label,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      duration: +(s.endTime - s.startTime).toFixed(2),
+      assetUrl:
+        s.type === "DALLE" || s.type === "MOTION_GRAPHIC"
+          ? (s as { imageUrl?: string }).imageUrl || null
+          : (s as { videoUrl?: string }).videoUrl || null,
+      transitionIn: s.transitionIn,
+      transitionOut: s.transitionOut,
+    }));
+    await fs.writeFile(
+      path.join(workDir, "plan.json"),
+      JSON.stringify(plan, null, 2)
+    );
+    console.log(`[v2] Job ${jobId}: manifest + plan saved. ${plan.length} scenes, types: ${[...new Set(plan.map(p => p.type))].join(", ")}`);
+
     // ── Phase 1: Download all assets (0-30%) ──
     console.log(`[v2] Job ${jobId}: downloading assets...`);
     onProgress(5);
@@ -466,6 +496,29 @@ export async function assembleVideoV2(
 
     await parallelLimit(downloadTasks, 5);
     onProgress(30);
+
+    // ── Phase 1b: Validate downloaded assets ──
+    const missingScenes: string[] = [];
+    for (const scene of manifest.scenes) {
+      const idx = scene.sceneIndex;
+      if (!assetPaths.has(idx)) {
+        const assetUrl =
+          scene.type === "DALLE" || scene.type === "MOTION_GRAPHIC"
+            ? (scene as { imageUrl?: string }).imageUrl
+            : (scene as { videoUrl?: string }).videoUrl;
+        // Empty URL means the manifest itself had no asset — this is a pipeline gap, not a download failure
+        if (!assetUrl) {
+          missingScenes.push(`Scene ${idx} (${scene.type}): no asset URL in manifest — ${scene.type === "STOCK" ? "run Stock Footage step" : scene.type === "RUNWAY" ? "run Hero Scenes step" : "check image generation"}`);
+        } else {
+          missingScenes.push(`Scene ${idx} (${scene.type}): download failed for ${assetUrl.slice(0, 80)}`);
+        }
+      }
+    }
+    if (missingScenes.length > 0) {
+      const msg = `Asset validation failed — ${missingScenes.length} scene(s) missing:\n${missingScenes.join("\n")}`;
+      console.error(`[v2] Job ${jobId}: ${msg}`);
+      throw new Error(msg);
+    }
 
     // ── Phase 2: Prepare clips (30-60%) ──
     console.log(`[v2] Job ${jobId}: preparing clips...`);

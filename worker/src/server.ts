@@ -84,8 +84,9 @@ app.post("/assemble", async (req, res) => {
         job.completedAt = new Date().toISOString();
 
         if (callbackUrl) {
+          console.log(`Job ${jobId}: sending callback to ${callbackUrl}`);
           try {
-            await fetch(callbackUrl, {
+            const cbRes = await fetch(callbackUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -98,9 +99,16 @@ app.post("/assemble", async (req, res) => {
                 fileSizeBytes: result.fileSizeBytes,
               }),
             });
+            if (!cbRes.ok) {
+              console.error(`Job ${jobId}: callback returned ${cbRes.status} ${cbRes.statusText} — output URLs: landscape=${result.landscapeUrl} portrait=${result.portraitUrl}`);
+            } else {
+              console.log(`Job ${jobId}: callback success`);
+            }
           } catch (err) {
-            console.error("Callback failed:", err);
+            console.error(`Job ${jobId}: callback failed (${callbackUrl}):`, err, `— output URLs: landscape=${result.landscapeUrl} portrait=${result.portraitUrl}`);
           }
+        } else {
+          console.warn(`Job ${jobId}: no callbackUrl — output URLs: landscape=${result.landscapeUrl} portrait=${result.portraitUrl}`);
         }
       } else {
         const result = await assembleVideo(manifest, onProgress);
@@ -111,8 +119,9 @@ app.post("/assemble", async (req, res) => {
         job.completedAt = new Date().toISOString();
 
         if (callbackUrl) {
+          console.log(`Job ${jobId}: sending V1 callback to ${callbackUrl}`);
           try {
-            await fetch(callbackUrl, {
+            const cbRes = await fetch(callbackUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -124,8 +133,11 @@ app.post("/assemble", async (req, res) => {
                 fileSizeBytes: result.fileSizeBytes,
               }),
             });
+            if (!cbRes.ok) {
+              console.error(`Job ${jobId}: V1 callback returned ${cbRes.status} — outputUrl=${result.outputUrl}`);
+            }
           } catch (err) {
-            console.error("Callback failed:", err);
+            console.error(`Job ${jobId}: V1 callback failed (${callbackUrl}):`, err, `— outputUrl=${result.outputUrl}`);
           }
         }
       }

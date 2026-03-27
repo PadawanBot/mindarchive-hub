@@ -19,6 +19,7 @@ import {
   Download,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
 } from "lucide-react";
 import type { Project, StepResult } from "@/types";
 import { STEPS, PRE_PROD_STEPS, PROD_STEPS, OUTPUT_LABELS } from "@/components/pipeline/constants";
@@ -39,6 +40,9 @@ export default function ProjectDetailPage() {
   const [assemblyStatus, setAssemblyStatus] = useState<string | null>(null);
   const assemblyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [auditResult, setAuditResult] = useState<Record<string, any> | null>(null);
+  const [auditing, setAuditing] = useState(false);
   const [preProdCollapsed, setPreProdCollapsed] = useState(false);
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
 
@@ -296,6 +300,26 @@ export default function ProjectDetailPage() {
     abortRef.current = true;
   };
 
+  // Preflight audit — validates manifest without rendering
+  const runAudit = async () => {
+    setAuditing(true);
+    setAuditResult(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/pipeline/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project?.id }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+      setAuditResult(data.data);
+    } catch (err) {
+      setError(String(err));
+    }
+    setAuditing(false);
+  };
+
   // Server-side assembly via EC2 worker
   const assembleVideo = async () => {
     setAssembling(true);
@@ -310,12 +334,15 @@ export default function ProjectDetailPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       const jobId = data.data?.jobId;
+      const workerUrl = data.data?.workerUrl;
       setAssemblyStatus(`Video rendering on server...${jobId ? ` Job: ${jobId}` : ""}`);
 
       // Poll project for output_url (callback sets it when worker finishes)
+      // Also poll worker /status as fallback if callback URL was unreachable
       if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
       assemblyPollRef.current = setInterval(async () => {
         try {
+          // Primary: check if callback already updated the project
           const r = await fetch(`/api/projects/${params.id}`);
           const d = await r.json();
           if (d.success && d.data?.output_url) {
@@ -323,6 +350,45 @@ export default function ProjectDetailPage() {
             setAssembling(false);
             setProject(d.data);
             if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+            return;
+          }
+
+          // Fallback: check worker status directly (in case callback failed)
+          if (jobId && workerUrl) {
+            try {
+              const wr = await fetch(`${workerUrl}/status/${jobId}`);
+              const wd = await wr.json();
+              if (wd.status === "completed" && wd.outputUrl) {
+                // Worker finished but callback didn't reach us — update project manually
+                setAssemblyStatus("Saving output...");
+                await fetch(`/api/pipeline/assemble/callback`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    jobId,
+                    projectId: project?.id,
+                    status: "completed",
+                    outputUrl: wd.outputUrl,
+                    portraitUrl: wd.portraitUrl,
+                  }),
+                });
+                // Re-fetch project to pick up the URLs
+                const r2 = await fetch(`/api/projects/${params.id}`);
+                const d2 = await r2.json();
+                if (d2.success) setProject(d2.data);
+                setAssemblyStatus(null);
+                setAssembling(false);
+                if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+              } else if (wd.status === "failed") {
+                setError(`Worker failed: ${wd.error || "Unknown error"}`);
+                setAssembling(false);
+                if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+              } else if (wd.progress) {
+                setAssemblyStatus(`Rendering... ${wd.progress}% (${wd.status})`);
+              }
+            } catch {
+              // Worker unreachable from browser (expected if CORS blocked) — rely on project poll
+            }
           }
         } catch {}
       }, 10_000); // check every 10s
@@ -713,7 +779,58 @@ export default function ProjectDetailPage() {
                 </div>
               )}
 
+              {/* Audit result display */}
+              {auditResult && (
+                <div className={`rounded-lg border p-3 text-sm space-y-2 ${auditResult.valid ? "border-green-500/40 bg-green-500/5" : "border-yellow-500/40 bg-yellow-500/5"}`}>
+                  <div className="flex items-center gap-2 font-medium">
+                    {auditResult.valid ? (
+                      <><CheckCircle className="h-4 w-4 text-green-500" /> Audit passed — ready to render</>
+                    ) : (
+                      <><AlertCircle className="h-4 w-4 text-yellow-500" /> Audit has warnings</>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>Scenes: {auditResult.sceneCount}</span>
+                    <span>Duration: {Math.round(auditResult.totalDuration)}s</span>
+                    {auditResult.assetCounts && <>
+                      <span>DALLE: {auditResult.assetCounts.dalleAvailable}/{auditResult.assetCounts.dalleRequired} available</span>
+                      <span>Stock: {auditResult.assetCounts.stockAvailable}/{auditResult.assetCounts.stockRequired} available</span>
+                      <span>Runway: {auditResult.assetCounts.runwayAvailable}/{auditResult.assetCounts.runwayRequired} available</span>
+                      <span>Motion Graphic: {auditResult.assetCounts.motionGraphicRequired} required</span>
+                    </>}
+                  </div>
+                  {auditResult.warnings?.length > 0 && (
+                    <ul className="text-xs text-yellow-600 dark:text-yellow-400 list-disc pl-4 space-y-0.5">
+                      {auditResult.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
+                    </ul>
+                  )}
+                  {auditResult.missingAssets?.length > 0 && (
+                    <div className="text-xs text-red-500">
+                      Missing assets: {auditResult.missingAssets.map((m: { sceneIndex: number; type: string; label: string }) =>
+                        `Scene ${m.sceneIndex} (${m.type}: ${m.label})`
+                      ).join(", ")}
+                    </div>
+                  )}
+                  {auditResult.duplicateAssets?.length > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      {auditResult.duplicateAssets.length} image(s) reused across multiple scenes
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={runAudit}
+                  disabled={auditing || assembling || browserAssembling || packaging}
+                  variant="outline"
+                >
+                  {auditing ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Auditing...</>
+                  ) : (
+                    <><ClipboardCheck className="h-4 w-4 mr-2" /> Audit Manifest</>
+                  )}
+                </Button>
                 <Button
                   onClick={assembleVideo}
                   disabled={assembling || browserAssembling || packaging}
