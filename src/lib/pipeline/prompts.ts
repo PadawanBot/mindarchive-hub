@@ -138,8 +138,8 @@ Complete ALL scenes in the script. Do not stop early.`,
       const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
       return {
         system: "You are a B-roll curation specialist. For each scene, decide the optimal blend of AI-generated imagery vs stock footage vs motion graphics. Output as JSON array with fields: scene_id, primary_source (dalle/pexels/runway/motion_graphic), secondary_source, blend_ratio, pexels_search_queries (array), transition_type (cut/dissolve/zoom/slide).",
-        user: `Curate the visual blend for this video:\n\nVisual direction:\n${visuals.slice(0, 3000)}\n\nOptimize for engagement and visual variety. Ensure at least 2-3 scenes use stock footage and 2-4 scenes use runway for emotional peaks.`,
-        maxTokens: 4096,
+        user: `Curate the visual blend for this video:\n\nVisual direction:\n${visuals.slice(0, 25000)}\n\nOptimize for engagement and visual variety. Ensure at least 2-3 scenes use stock footage and 2-4 scenes use runway for emotional peaks.`,
+        maxTokens: 8192,
       };
     }
 
@@ -187,8 +187,8 @@ CRITICAL RULES:
 3. Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
 4. Duration of each scene is derived from the word count of that section at the given WPM.
 5. PRESERVE the tag_type assignments from the visual direction — do not make everything DALLE.`,
-        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan (PRESERVE the tag_type assignments):\n${visuals.slice(0, 2000)}\n\nBlend curator plan:\n${blend.slice(0, 1000)}`,
-        maxTokens: 4096,
+        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 6000)}\n\nVisual direction plan (PRESERVE the tag_type assignments):\n${visuals.slice(0, 25000)}\n\nBlend curator plan:\n${blend.slice(0, 10000)}`,
+        maxTokens: 8192,
       };
     }
 
