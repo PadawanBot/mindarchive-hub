@@ -126,7 +126,7 @@ Use DALLE as the default. RUNWAY only for emotional peaks. STOCK for real-world 
 Output as a JSON array:
 [{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]`,
         user: `Create visual direction for this script:\n\n${script.slice(0, 4000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
-        maxTokens: 8192,
+        maxTokens: 16384,
       };
     }
 
