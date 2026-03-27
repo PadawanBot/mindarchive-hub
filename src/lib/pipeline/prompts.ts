@@ -73,7 +73,7 @@ FORMAT REQUIREMENTS:
 - End with a clear CTA
 
 Output the complete narration script with visual tags after each paragraph.`,
-        maxTokens: 4096,
+        maxTokens: 8192,
       };
     }
 
@@ -118,7 +118,7 @@ Use DALLE as the default. RUNWAY only for emotional peaks. STOCK for real-world 
 Output as a JSON array:
 [{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]`,
         user: `Create visual direction for this script:\n\n${script.slice(0, 4000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
-        maxTokens: 4096,
+        maxTokens: 8192,
       };
     }
 
@@ -148,7 +148,7 @@ CRITICAL: Preserve all visual tags ([DALLE: ...], [RUNWAY: ...], [STOCK: ...], [
 
 Output the complete refined script with all visual tags intact.`,
         user: `Refine this script:\n\n${script}\n\nAlternative hooks to consider:\n${hooks}\n\nRequirements:\n- Integrate the strongest hook\n- Strengthen all transitions\n- Eliminate filler words\n- Keep ALL visual tags ([DALLE:], [RUNWAY:], [STOCK:], [MOTION_GRAPHIC:]) intact\n- Maintain target word count\n\nOutput the complete refined script.`,
-        maxTokens: 4096,
+        maxTokens: 8192,
       };
     }
 
