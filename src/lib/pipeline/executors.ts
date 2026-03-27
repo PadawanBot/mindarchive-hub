@@ -487,11 +487,14 @@ const image_generation: StepExecutor = async (ctx) => {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Generate up to 15 images (3 in parallel batches — DALL-E takes ~15-20s each)
+  // Generate up to 15 images in parallel batches
+  // DALL-E 3 takes ~15-20s each. Batch size 5 = 2 batches for 10 images ≈ 40s
   const maxImages = Math.min(prompts.length, 15);
-  const batchSize = 3;
+  const batchSize = 5;
   const images: { prompt: string; url: string; revised_prompt: string; stored: boolean }[] = [];
 
+  // Phase 1: Generate all DALL-E images (parallel batches, ~20s per batch)
+  const tempImages: { prompt: string; url: string; revised_prompt: string; index: number }[] = [];
   for (let batch = 0; batch < maxImages; batch += batchSize) {
     const batchPrompts = prompts.slice(batch, batch + batchSize);
     const batchResults = await Promise.all(
@@ -499,21 +502,31 @@ const image_generation: StepExecutor = async (ctx) => {
         const i = batch + batchIdx;
         try {
           const img = await generateImage(key, sanitizePrompt(p));
-          const storedUrl = await downloadAndStore(
-            ctx.project.id, `dalle-scene-${i + 1}.png`, img.url, "image/png"
-          );
-          if (!storedUrl) {
-            console.error(`[image_generation] Failed to persist DALL-E image ${i + 1} to storage, using temp URL`);
-          }
-          return { prompt: p, url: storedUrl || img.url, revised_prompt: img.revisedPrompt, stored: !!storedUrl };
+          return { prompt: p, url: img.url, revised_prompt: img.revisedPrompt, index: i };
         } catch (err) {
           console.error(`[image_generation] Image ${i + 1} failed:`, err);
           return null;
         }
       })
     );
-    images.push(...batchResults.filter(Boolean) as typeof images);
+    tempImages.push(...batchResults.filter(Boolean) as typeof tempImages);
   }
+
+  // Phase 2: Persist to storage (all in parallel — don't wait sequentially)
+  const storeResults = await Promise.all(
+    tempImages.map(async (img) => {
+      try {
+        const storedUrl = await downloadAndStore(
+          ctx.project.id, `dalle-scene-${img.index + 1}.png`, img.url, "image/png"
+        );
+        return { prompt: img.prompt, url: storedUrl || img.url, revised_prompt: img.revised_prompt, stored: !!storedUrl };
+      } catch (err) {
+        console.error(`[image_generation] Storage failed for image ${img.index + 1}, using temp URL:`, err);
+        return { prompt: img.prompt, url: img.url, revised_prompt: img.revised_prompt, stored: false };
+      }
+    })
+  );
+  images.push(...storeResults);
 
   return {
     output: { status: "completed", images, total_prompts: prompts.length, generated: images.length },
