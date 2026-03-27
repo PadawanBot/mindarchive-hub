@@ -32,9 +32,12 @@ export default function ProjectDetailPage() {
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { assemble, assembling, progress: assemblyProgress, error: assemblyError } = useVideoAssembler();
+  const { assemble, assembling: browserAssembling, progress: assemblyProgress, error: assemblyError } = useVideoAssembler();
   const [packaging, setPackaging] = useState(false);
   const [packageProgress, setPackageProgress] = useState({ stage: "", pct: 0 });
+  const [assembling, setAssembling] = useState(false);
+  const [assemblyStatus, setAssemblyStatus] = useState<string | null>(null);
+  const assemblyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
   const [preProdCollapsed, setPreProdCollapsed] = useState(false);
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
@@ -293,26 +296,69 @@ export default function ProjectDetailPage() {
     abortRef.current = true;
   };
 
+  // Server-side assembly via EC2 worker
   const assembleVideo = async () => {
-    // Gather assets from completed steps
+    setAssembling(true);
+    setAssemblyStatus(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/pipeline/assemble", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project?.id }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+      const jobId = data.data?.jobId;
+      setAssemblyStatus(`Video rendering on server...${jobId ? ` Job: ${jobId}` : ""}`);
+
+      // Poll project for output_url (callback sets it when worker finishes)
+      if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+      assemblyPollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/projects/${params.id}`);
+          const d = await r.json();
+          if (d.success && d.data?.output_url) {
+            setAssemblyStatus(null);
+            setAssembling(false);
+            setProject(d.data);
+            if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+          }
+        } catch {}
+      }, 10_000); // check every 10s
+
+      // Auto-stop polling after 15 minutes
+      setTimeout(() => {
+        if (assemblyPollRef.current) {
+          clearInterval(assemblyPollRef.current);
+          setAssembling(false);
+          setAssemblyStatus("Render timed out — check worker logs");
+        }
+      }, 15 * 60 * 1000);
+    } catch (err) {
+      setError(String(err));
+      setAssembling(false);
+    }
+  };
+
+  // Browser-based quick preview (ffmpeg.wasm)
+  const assemblePreview = async () => {
     const voiceoverStep = steps.find(s => s.step === "voiceover_generation" && s.status === "completed");
     const imageStep = steps.find(s => s.step === "image_generation" && s.status === "completed");
     const timingStep = steps.find(s => s.step === "timing_sync" && s.status === "completed");
 
     const audioUrl = (voiceoverStep?.output as Record<string, unknown>)?.audio_url as string | undefined;
     if (!audioUrl) {
-      setError("Voiceover audio not available. Re-run Voiceover Generation step first (it needs to save the MP3 to storage).");
+      setError("Voiceover audio not available. Re-run Voiceover Generation step first.");
       return;
     }
 
-    // Get images
     const images = ((imageStep?.output as Record<string, unknown>)?.images as { url: string }[]) || [];
     if (images.length === 0) {
       setError("No images available. Re-run Image Generation step first.");
       return;
     }
 
-    // Calculate scene durations from timing data or distribute evenly
     let sceneDurations: number[] = [];
     try {
       const timingText = (timingStep?.output as Record<string, unknown>)?.timing as string;
@@ -326,7 +372,6 @@ export default function ProjectDetailPage() {
       }
     } catch {}
 
-    // Build scenes — map images to timing segments
     const voiceoverDuration = ((voiceoverStep?.output as Record<string, unknown>)?.estimated_duration_minutes as number || 7) * 60;
     const scenes = images.map((img, i) => ({
       imageUrl: img.url,
@@ -336,6 +381,13 @@ export default function ProjectDetailPage() {
     const slug = project?.title?.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "video";
     await assemble(audioUrl, scenes, `${slug}.mp4`);
   };
+
+  // Cleanup poll on unmount
+  useEffect(() => {
+    return () => {
+      if (assemblyPollRef.current) clearInterval(assemblyPollRef.current);
+    };
+  }, []);
 
   if (!project) {
     return (
@@ -640,7 +692,39 @@ export default function ProjectDetailPage() {
             {/* Video Output Options */}
             <div className="mt-4 pt-4 border-t border-muted space-y-3">
               <h4 className="text-sm font-semibold">Video Output</h4>
+
+              {/* Show rendered video if available */}
+              {project.output_url && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    <span className="text-sm font-medium">Landscape (16:9)</span>
+                  </div>
+                  <video src={project.output_url} controls className="w-full max-w-2xl rounded-lg border border-muted" />
+                  {project.output_portrait_url && (
+                    <>
+                      <div className="flex items-center gap-2 mt-3">
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <span className="text-sm font-medium">Portrait (9:16)</span>
+                      </div>
+                      <video src={project.output_portrait_url} controls className="w-48 rounded-lg border border-muted" />
+                    </>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={assembleVideo}
+                  disabled={assembling || browserAssembling || packaging}
+                  variant="primary"
+                >
+                  {assembling ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Rendering on Server...</>
+                  ) : (
+                    <><Play className="h-4 w-4 mr-2" /> {project.output_url ? "Re-render Video" : "Assemble Video"}</>
+                  )}
+                </Button>
                 <Button
                   onClick={async () => {
                     setPackaging(true);
@@ -655,8 +739,8 @@ export default function ProjectDetailPage() {
                     }
                     setPackaging(false);
                   }}
-                  disabled={packaging || assembling}
-                  variant="primary"
+                  disabled={packaging || assembling || browserAssembling}
+                  variant="outline"
                 >
                   {packaging ? (
                     <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {packageProgress.stage}</>
@@ -665,36 +749,46 @@ export default function ProjectDetailPage() {
                   )}
                 </Button>
                 <Button
-                  onClick={assembleVideo}
-                  disabled={assembling || packaging}
-                  variant="outline"
+                  onClick={assemblePreview}
+                  disabled={browserAssembling || assembling || packaging}
+                  variant="ghost"
+                  size="sm"
                 >
-                  {assembling ? (
+                  {browserAssembling ? (
                     <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {assemblyProgress.stage}</>
                   ) : (
                     <><Play className="h-4 w-4 mr-2" /> Quick Preview (Browser)</>
                   )}
                 </Button>
               </div>
+
+              {assemblyStatus && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>{assemblyStatus}</span>
+                </div>
+              )}
+
               <p className="text-xs text-muted-foreground">
-                <strong>Render Package:</strong> ZIP with timing.json, assets, docs, and Python render script (ffmpeg).
-                Produces horizontal + vertical video.
-                {" "}<strong>Quick Preview:</strong> Basic browser render (best for clips under 60s — may be slow or crash on longer videos).
+                <strong>Assemble Video:</strong> Full render on EC2 worker — multi-source timeline with crossfades, Ken Burns, motion graphics. Outputs landscape + portrait.
+                {" "}<strong>Render Package:</strong> ZIP for local ffmpeg render.
+                {" "}<strong>Quick Preview:</strong> Basic browser render (short clips only).
               </p>
-              {(assembling || packaging) && (
+
+              {(browserAssembling || packaging) && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
                     <div className="flex-1 bg-muted rounded-full h-2">
                       <div
                         className="bg-primary h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${assembling ? assemblyProgress.percent : packageProgress.pct}%` }}
+                        style={{ width: `${browserAssembling ? assemblyProgress.percent : packageProgress.pct}%` }}
                       />
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {assembling ? `${assemblyProgress.percent}%` : `${packageProgress.pct}%`}
+                      {browserAssembling ? `${assemblyProgress.percent}%` : `${packageProgress.pct}%`}
                     </span>
                   </div>
-                  {assembling && assemblyProgress.detail && (
+                  {browserAssembling && assemblyProgress.detail && (
                     <p className="text-xs text-muted-foreground">{assemblyProgress.detail}</p>
                   )}
                 </div>
