@@ -107,25 +107,30 @@ Rank by emotional intensity — Hook #1 should be the strongest cold open candid
       const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
         || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       return {
-        system: `You are a visual director. For each scene in the script, output a JSON object with ONLY these fields — no extra fields, no long descriptions:
+        system: `You are a visual director for faceless YouTube documentary videos. For each scene/paragraph in the script, generate detailed visual direction and a production spec.
 
-{"scene":1,"tag_type":"DALLE","prompt":"one sentence max","ken_burns":"zoom-in 1.05","duration":8,"transition_in":"fade","transition_out":"crossfade"}
+For each scene, describe:
+- Environment, time of day, tone
+- Camera angle, lighting, composition
+- Colour grade direction
+- Style reference (cinematic, documentary, stylized realism)
 
-Tag types:
-- DALLE: prompt must end with "photorealistic, 4K documentary style, no text in frame". Add ken_burns field.
-- RUNWAY: prompt describes 5-10s motion. Add motion_type field. Max 3-5 per video.
-- STOCK: use "search_keywords" instead of "prompt" (2-3 real-world Pexels terms). No fictional characters.
-- MOTION_GRAPHIC: use "text_content" instead of "prompt". Add "layout_type" (title_card/list_card/end_card).
+Then assign ONE tag_type per scene and provide the matching production spec:
+- "DALLE": DALL-E 3 prompt — MUST end with "cinematic, photorealistic, 4K documentary style, no text in frame". Include Ken Burns direction (zoom amount like 1.04-1.08, duration, pan direction).
+- "RUNWAY": Runway Gen-3 motion prompt — 5-10 seconds, cinematic movement. Include motion_type (push-in, dolly, pull-back, tracking). Max 3-5 RUNWAY scenes per video — use only for peak emotional/cinematic moments.
+- "STOCK": search_keywords field — 2-3 Pexels keywords for real-world footage (nature, cities, people, abstract — NO fictional characters or anime terms).
+- "MOTION_GRAPHIC": text_content + layout_type (title_card / list_card / checklist / end_card) + colour_scheme with hex values. Use for titles, statistics, checklists, end cards.
 
-Distribution: ~60% DALLE, ~15% RUNWAY (emotional peaks), ~10% STOCK (real-world B-roll), ~15% MOTION_GRAPHIC (titles/data/end card).
+Distribution: ~60% DALLE (default), ~15% RUNWAY (emotional peaks only), ~10% STOCK (real-world B-roll), ~15% MOTION_GRAPHIC (titles/data/end card).
 
-STRICT RULES:
-1. Output ONLY a JSON array — no markdown fences, no commentary
-2. Prompts MUST be ONE sentence (under 40 words)
-3. Complete ALL scenes — do NOT stop early
-4. No "visual_direction" or "narration" fields — omit them entirely`,
-        user: `Visual direction for:\n\n${script.slice(0, 5000)}\n\nNiche: ${ctx.profile?.niche || "general"}`,
-        maxTokens: 8192,
+Output as a JSON array. Each entry has:
+- scene (int), tag_type, visual_direction (scene description), prompt/search_keywords/text_content (depending on tag_type)
+- duration (seconds), transition_in, transition_out
+- ken_burns (for DALLE), motion_type (for RUNWAY), layout_type + colour_scheme (for MOTION_GRAPHIC)
+
+Complete ALL scenes in the script. Do not stop early.`,
+        user: `Create visual direction for this script:\n\n${script.slice(0, 6000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
+        maxTokens: 16384,
       };
     }
 

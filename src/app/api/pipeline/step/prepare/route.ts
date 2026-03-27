@@ -85,6 +85,60 @@ export async function POST(request: Request) {
     const provider = profile?.llm_provider || settings.default_provider || settings.default_llm_provider || "anthropic";
     const model = profile?.llm_model || settings.default_model || settings.default_llm_model || "claude-sonnet-4-6";
 
+    // Route long-running LLM steps to EC2 worker (no timeout constraint)
+    const WORKER_ROUTED_STEPS = ["visual_direction"];
+    const workerUrl = process.env.WORKER_URL;
+
+    if (WORKER_ROUTED_STEPS.includes(step) && workerUrl && provider === "anthropic") {
+      // Build callback URL for the worker to POST results back
+      const origin = request.headers.get("origin")
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+        || (request.headers.get("host") ? `https://${request.headers.get("host")}` : null)
+        || "";
+      const callbackUrl = `${origin}/api/pipeline/step/llm-callback`;
+
+      try {
+        const workerRes = await fetch(`${workerUrl}/llm`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+          },
+          body: JSON.stringify({
+            step,
+            projectId: project_id,
+            system: prompt.system,
+            prompt: prompt.user,
+            maxTokens: prompt.maxTokens,
+            model,
+            callbackUrl,
+          }),
+        });
+
+        if (!workerRes.ok) {
+          const errText = await workerRes.text();
+          console.error(`[prepare] Worker /llm failed: ${errText}`);
+          // Fall through to normal streaming path
+        } else {
+          const { jobId } = await workerRes.json();
+          console.log(`[prepare] Step ${step} routed to worker — job ${jobId}`);
+          return NextResponse.json({
+            success: true,
+            data: {
+              needs_llm: false,
+              routed_to_worker: true,
+              step,
+              project_id,
+              jobId,
+            },
+          });
+        }
+      } catch (err) {
+        console.error(`[prepare] Failed to reach worker for ${step}:`, err);
+        // Fall through to normal streaming path
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {

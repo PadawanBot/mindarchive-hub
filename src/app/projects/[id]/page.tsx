@@ -93,6 +93,35 @@ export default function ProjectDetailPage() {
         return true;
       }
 
+      // Worker-routed LLM step — poll for completion
+      if (prepData.data.routed_to_worker) {
+        const jobId = prepData.data.jobId;
+        // Poll step status until completed or failed (worker calls back to save result)
+        for (let i = 0; i < 120; i++) { // max 10 minutes (120 * 5s)
+          await new Promise(r => setTimeout(r, 5000));
+          try {
+            const stepsRes = await fetch(`/api/pipeline/steps?project_id=${params.id}`);
+            const stepsText = await stepsRes.text();
+            if (!stepsText) continue;
+            const stepsData = JSON.parse(stepsText);
+            if (!stepsData.success) continue;
+            const stepResult = (stepsData.data as { step: string; status: string }[])?.find(s => s.step === stepId);
+            if (stepResult?.status === "completed") {
+              await loadSteps();
+              await loadProject();
+              return true;
+            }
+            if (stepResult?.status === "failed") {
+              setError(`Step ${stepId} failed on worker${jobId ? ` (job ${jobId})` : ""}`);
+              await loadSteps();
+              return false;
+            }
+          } catch {}
+        }
+        setError(`Step ${stepId} timed out waiting for worker result`);
+        return false;
+      }
+
       // Non-LLM step — run via the old single-call endpoint
       if (!prepData.data.needs_llm) {
         const res = await fetch("/api/pipeline/step", {

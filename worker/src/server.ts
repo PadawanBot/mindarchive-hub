@@ -1,4 +1,5 @@
 import express from "express";
+import Anthropic from "@anthropic-ai/sdk";
 import { assembleVideo, assembleVideoV2 } from "./assembler";
 import { v4 as uuid } from "uuid";
 
@@ -38,7 +39,116 @@ app.get("/health", (_req, res) => {
 
 // Apply auth to protected routes
 app.use("/assemble", authMiddleware);
+app.use("/llm", authMiddleware);
 app.use("/status", authMiddleware);
+
+// ── Long-running LLM endpoint (no timeout) ──
+
+app.post("/llm", async (req, res) => {
+  const { step, projectId, system, prompt, maxTokens, model, callbackUrl } = req.body;
+
+  if (!projectId || !system || !prompt) {
+    return res.status(400).json({ error: "Missing required fields: projectId, system, prompt" });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on worker" });
+  }
+
+  const jobId = uuid();
+  const job: Job = {
+    id: jobId,
+    projectId,
+    status: "queued",
+    progress: 0,
+    startedAt: new Date().toISOString(),
+  };
+  jobs.set(jobId, job);
+
+  const llmModel = model || "claude-sonnet-4-6";
+  console.log(`LLM Job ${jobId}: step=${step} model=${llmModel} maxTokens=${maxTokens || 16384}`);
+
+  // Run LLM call asynchronously
+  (async () => {
+    try {
+      job.status = "rendering"; // reuse status for "generating"
+      job.progress = 10;
+
+      const client = new Anthropic({ apiKey });
+      const message = await client.messages.create({
+        model: llmModel,
+        max_tokens: maxTokens || 16384,
+        system,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = message.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+
+      const inputTokens = message.usage.input_tokens;
+      const outputTokens = message.usage.output_tokens;
+
+      job.status = "completed";
+      job.progress = 100;
+      job.completedAt = new Date().toISOString();
+
+      console.log(`LLM Job ${jobId}: completed — ${outputTokens} output tokens, ${text.length} chars`);
+
+      if (callbackUrl) {
+        console.log(`LLM Job ${jobId}: sending callback to ${callbackUrl}`);
+        try {
+          const cbRes = await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jobId,
+              step,
+              projectId,
+              status: "completed",
+              text,
+              inputTokens,
+              outputTokens,
+              model: llmModel,
+            }),
+          });
+          if (!cbRes.ok) {
+            console.error(`LLM Job ${jobId}: callback returned ${cbRes.status} ${cbRes.statusText}`);
+          } else {
+            console.log(`LLM Job ${jobId}: callback success`);
+          }
+        } catch (err) {
+          console.error(`LLM Job ${jobId}: callback failed:`, err);
+        }
+      }
+    } catch (err) {
+      job.status = "failed";
+      job.error = String(err);
+      job.completedAt = new Date().toISOString();
+      console.error(`LLM Job ${jobId} failed:`, err);
+
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jobId,
+              step,
+              projectId,
+              status: "failed",
+              error: String(err),
+            }),
+          });
+        } catch {}
+      }
+    }
+  })();
+
+  res.json({ jobId, status: "queued" });
+});
 
 // Start assembly job
 app.post("/assemble", async (req, res) => {
