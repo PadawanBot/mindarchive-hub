@@ -90,12 +90,8 @@ export async function POST(request: Request) {
     const workerUrl = process.env.WORKER_URL;
 
     if (WORKER_ROUTED_STEPS.includes(step) && workerUrl && provider === "anthropic") {
-      // Build callback URL for the worker to POST results back
-      const origin = request.headers.get("origin")
-        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-        || (request.headers.get("host") ? `https://${request.headers.get("host")}` : null)
-        || "";
-      const callbackUrl = `${origin}/api/pipeline/step/llm-callback`;
+      // Build callback URL — always use production URL to avoid Vercel deployment protection on preview URLs
+      const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
 
       try {
         const workerRes = await fetch(`${workerUrl}/llm`, {
