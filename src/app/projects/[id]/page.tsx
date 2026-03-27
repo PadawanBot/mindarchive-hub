@@ -816,6 +816,14 @@ export default function ProjectDetailPage() {
                       {auditResult.duplicateAssets.length} image(s) reused across multiple scenes
                     </div>
                   )}
+                  {auditResult.timingDebug && (
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Timing debug</summary>
+                      <pre className="mt-1 p-2 bg-muted rounded text-[10px] overflow-x-auto whitespace-pre-wrap">
+                        {`Parsed entries: ${auditResult.timingDebug.parsedLength}\nRaw length: ${auditResult.timingDebug.rawLength} chars\nSample: ${auditResult.timingDebug.rawSample}`}
+                      </pre>
+                    </details>
+                  )}
                 </div>
               )}
 

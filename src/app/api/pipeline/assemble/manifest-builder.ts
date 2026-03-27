@@ -187,6 +187,7 @@ export interface ManifestBuildResult {
     runwayRequired: number;
     motionGraphicRequired: number;
   };
+  timingDebug: { rawType: string; rawLength: number; rawSample: string; parsedLength: number } | null;
   error?: undefined;
 }
 
@@ -250,10 +251,35 @@ export function buildManifest(
 
   // ── Parse and normalise timing data ──
   let timingData: TimingEntry[] = [];
+  let timingDebug: { rawType: string; rawLength: number; rawSample: string; parsedLength: number } | null = null;
   if (timingSync?.timing) {
-    const parsed = safeParse<Record<string, unknown>[]>(timingSync.timing);
+    const raw = timingSync.timing;
+    const parsed = safeParse<Record<string, unknown>[] | Record<string, unknown>>(raw);
+
+    // Handle case where the LLM wraps the array in an object
+    let entries: Record<string, unknown>[] | null = null;
     if (Array.isArray(parsed) && parsed.length > 0) {
-      timingData = normaliseTimingEntries(parsed);
+      entries = parsed;
+    } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      // Try common wrapper keys: timing, scenes, entries, data
+      for (const key of ["timing", "scenes", "entries", "data", "timeline"]) {
+        const nested = (parsed as Record<string, unknown>)[key];
+        if (Array.isArray(nested) && nested.length > 0) {
+          entries = nested as Record<string, unknown>[];
+          break;
+        }
+      }
+    }
+
+    timingDebug = {
+      rawType: typeof raw,
+      rawLength: raw.length,
+      rawSample: raw.slice(0, 300),
+      parsedLength: entries?.length || 0,
+    };
+
+    if (entries && entries.length > 0) {
+      timingData = normaliseTimingEntries(entries);
     }
   }
 
@@ -513,5 +539,6 @@ export function buildManifest(
       runwayRequired,
       motionGraphicRequired,
     },
+    timingDebug,
   };
 }

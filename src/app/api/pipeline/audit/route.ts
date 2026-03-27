@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const { scenes, warnings, assetCounts } = result as import("../assemble/manifest-builder").ManifestBuildResult;
+    const { scenes, warnings, assetCounts, timingDebug } = result as import("../assemble/manifest-builder").ManifestBuildResult;
 
     // Per-scene report
     const sceneReport = scenes.map((s) => {
@@ -99,6 +99,7 @@ export async function POST(request: Request) {
         duplicateAssets,
         missingAssets: missingAssets.map((s) => ({ sceneIndex: s.sceneIndex, type: s.type, label: s.label })),
         warnings,
+        timingDebug,
       },
     });
   } catch (error) {
