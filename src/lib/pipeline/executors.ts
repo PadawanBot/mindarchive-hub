@@ -52,7 +52,7 @@ const COPYRIGHTED_REPLACEMENTS: [RegExp, string][] = [
  * Strip copyrighted character/franchise names from prompts and
  * prepend a style prefix for consistent video generation.
  */
-function sanitizePrompt(prompt: string, stylePrefix = "Animated 2D anime style. "): string {
+function sanitizePrompt(prompt: string, stylePrefix = "Cinematic photorealistic 4K documentary style. "): string {
   let cleaned = prompt;
   for (const [pattern, replacement] of COPYRIGHTED_REPLACEMENTS) {
     cleaned = cleaned.replace(pattern, replacement);
@@ -147,8 +147,39 @@ const script_writing: StepExecutor = async (ctx) => {
   const durMax = ctx.format?.duration_max ? Math.round(ctx.format.duration_max / 60) : 10;
 
   const result = await callLLM(ctx,
-    `You are an expert YouTube scriptwriter for faceless channels. Write engaging, hook-driven scripts. CRITICAL RULES:\n- The voiceover MP3 is the production clock — word count drives runtime\n- MOTION_GRAPHIC tags are visual supplements ONLY — never replace narration\n- No text in DALL-E prompts — Pillow handles all text overlays\n- Format preset parameters drive content generation\n\nVoice style: ${ctx.profile?.voice_style || "professional"}`,
-    `Write a full YouTube script for: "${ctx.project.topic}"\n\nResearch data:\n${research}\n\nFORMAT REQUIREMENTS:\n- Sections: ${sections}\n- Target word count: ${wordMin}-${wordMax} words\n- Target runtime: ${durMin}-${durMax} minutes at ${wpm} WPM\n- Include [VISUAL CUE: description] tags between sections describing what the viewer sees\n- Start with a strong hook (first 5 seconds)\n- End with a clear CTA\n\nOutput the complete narration script with section headers and [VISUAL CUE] tags.`,
+    `You are an expert YouTube scriptwriter for faceless documentary channels. Write engaging, hook-driven scripts in the style of a Netflix episode.
+
+VISUAL TAG SYSTEM — after each paragraph of narration, add ONE visual tag on a new line:
+[DALLE: <cinematic still image — photorealistic, 4K documentary style, no text in frame>]
+[RUNWAY: <5-10s motion video — hero/peak emotional moment only, max 3-5 total per video>]
+[STOCK: <2-3 keyword search terms for real-world footage>]
+[MOTION_GRAPHIC: <text or data content to display as a card>]
+
+Use [DALLE] as the default for most scenes. Use [RUNWAY] ONLY for the most cinematic emotional peaks (max 3-5 per video). Use [STOCK] for real-world footage, environments, archival scenes. Use [MOTION_GRAPHIC] for statistics, titles, labels, checklists — any text on screen.
+
+CRITICAL RULES:
+- The voiceover MP3 is the production clock — word count drives runtime
+- [MOTION_GRAPHIC] is a VISUAL SUPPLEMENT only — never replaces narration. Every data point, checklist item, and tactic MUST be fully narrated. The card reinforces narration, not replaces it.
+- Never put text in DALLE prompts — Pillow handles all text overlays
+- DALLE style: "cinematic, photorealistic, 4K documentary style, no text in frame"
+- Include a cold open that hooks in 7 seconds
+- 3-act structure with emotional arc (curiosity, conflict, payoff)
+
+Voice style: ${ctx.profile?.voice_style || "professional"}`,
+    `Write a YouTube documentary script about: "${ctx.project.topic}"
+
+Research data:
+${research}
+
+FORMAT REQUIREMENTS:
+- Sections: ${sections}
+- Target word count: ${wordMin}-${wordMax} words
+- Target runtime: ${durMin}-${durMax} minutes at ${wpm} WPM
+- Each paragraph = one visual scene with a visual tag on the next line
+- Start with a strong hook (first 7 seconds)
+- End with a clear CTA
+
+Output the complete narration script with visual tags after each paragraph.`,
     4096
   );
   return {
@@ -177,10 +208,28 @@ const voice_selection: StepExecutor = async (ctx) => {
 };
 
 const visual_direction: StepExecutor = async (ctx) => {
-  const script = (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
+  const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
+    || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
   const result = await callLLM(ctx,
-    "You are a visual director for faceless YouTube videos. Create a visual plan with DALL-E image prompts and Pexels search queries for each script section. CRITICAL: Never include text in DALL-E prompts — all text overlays are handled by Pillow in post-production. MOTION_GRAPHIC tags are visual supplements only. Output as JSON with fields: scenes (array of {section, timestamp_approx, dalle_prompt, pexels_query, motion_graphic_overlay, duration_seconds}).",
-    `Create visual direction for this script:\n\n${script.slice(0, 3000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
+    `You are a visual director for faceless YouTube documentary videos. For each scene/paragraph in the script, generate detailed visual direction and a production spec.
+
+For each scene, describe:
+- Scene setup (environment, time of day, tone)
+- Camera angle, lighting, and composition
+- Style consistency (cinematic, documentary, stylized realism)
+- Colour grade direction
+
+Then assign ONE tag_type per scene and provide the matching production spec:
+- "DALLE": DALL-E 3 prompt — MUST be "cinematic, photorealistic, 4K documentary style, no text in frame". Include Ken Burns direction (zoom amount, duration, direction).
+- "RUNWAY": Runway Gen-3 motion prompt — 5-10 seconds, cinematic movement. Include motion type. Max 3-5 RUNWAY scenes per video — use only for peak emotional/cinematic moments.
+- "STOCK": 2-3 Pexels search keywords for real-world footage (nature, cities, people, abstract — NO fictional characters).
+- "MOTION_GRAPHIC": Text content + layout type (title_card / list_card / checklist / end_card) + colour scheme. Use for titles, statistics, checklists, end cards.
+
+Use DALLE as the default. RUNWAY only for emotional peaks. STOCK for real-world B-roll. MOTION_GRAPHIC for text/data cards.
+
+Output as a JSON array:
+[{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]`,
+    `Create visual direction for this script:\n\n${script.slice(0, 4000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
     4096
   );
   return {
@@ -230,20 +279,22 @@ const timing_sync: StepExecutor = async (ctx) => {
   const result = await callLLM(ctx,
     `You are a video timing engineer. Map each scene to precise timestamps based on word count and WPM. The voiceover MP3 is the production clock.
 
-CRITICAL: Output as a JSON array where each entry has EXACTLY these fields:
-- scene (integer, starting from 1)
-- tag_type (one of: "DALLE", "RUNWAY", "STOCK", "MOTION_GRAPHIC" — based on the blend curator's primary_source for that scene)
-- duration (number, seconds — derived from word count / WPM)
-- label (string — section name from the script)
-- start_time_seconds (number)
-- end_time_seconds (number)
-- transition_in (string: "fade", "cut", "dissolve")
-- transition_out (string: "fade", "cut", "dissolve")
-- notes (string — timing notes for the editor)
-
-Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
-Duration of each scene is derived from the word count of that section at the given WPM.`,
-    `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan:\n${visuals.slice(0, 1500)}\n\nBlend curator plan (determines tag_type per scene):\n${blend.slice(0, 1500)}`
+CRITICAL RULES:
+1. Output ONLY a JSON array — no markdown fences, no commentary.
+2. Each entry must have EXACTLY these fields:
+   - scene (integer, starting from 1)
+   - tag_type (one of: "DALLE", "RUNWAY", "STOCK", "MOTION_GRAPHIC" — MUST match the tag_type from the visual direction plan for that scene. Do NOT change asset assignments.)
+   - duration (number, seconds — derived from word count / WPM)
+   - label (string — section name from the script)
+   - start_time_seconds (number)
+   - end_time_seconds (number)
+   - transition_in (string: "fade", "cut", "dissolve")
+   - transition_out (string: "fade", "cut", "dissolve")
+   - visual_asset_id (string — format: TAG_NNN_short_description, e.g. "DALLE_001_hands_reaching_table", "RUNWAY_003_eye_macro_pullback", "STOCK_012_milgram_experiment", "MOTION_GRAPHIC_005_title_card")
+3. Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
+4. Duration of each scene is derived from the word count of that section at the given WPM.
+5. PRESERVE the tag_type assignments from the visual direction — do not make everything DALLE.`,
+    `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 3000)}\n\nVisual direction plan (PRESERVE the tag_type assignments):\n${visuals.slice(0, 2000)}\n\nBlend curator plan:\n${blend.slice(0, 1000)}`
   );
   return { output: { timing: result.text }, cost_cents: estimateCost(ctx, result.inputTokens, result.outputTokens) };
 };
@@ -397,45 +448,72 @@ const image_generation: StepExecutor = async (ctx) => {
   if (!key) return { output: { status: "skipped", reason: "No OpenAI API key configured" }, cost_cents: 0 };
 
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
-  // Try to parse DALL-E prompts from the visual direction
+
+  // Extract DALL-E prompts from visual direction JSON
+  // Handles: {tag_type: "DALLE", prompt: "..."} or {dalle_prompt: "..."}
   let prompts: string[] = [];
+  let cleaned = visuals.trim();
+  // Strip markdown code fences
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
   try {
-    const parsed = JSON.parse(visuals);
+    let parsed = JSON.parse(cleaned);
+    // Handle wrapped objects
+    if (!Array.isArray(parsed) && typeof parsed === "object") {
+      for (const key of ["scenes", "data", "entries"]) {
+        if (Array.isArray(parsed[key])) { parsed = parsed[key]; break; }
+      }
+    }
     if (Array.isArray(parsed)) {
-      prompts = parsed.map((s: { dalle_prompt?: string }) => s.dalle_prompt).filter(Boolean) as string[];
-    } else if (parsed.scenes) {
-      prompts = parsed.scenes.map((s: { dalle_prompt?: string }) => s.dalle_prompt).filter(Boolean) as string[];
+      prompts = parsed
+        .filter((s: Record<string, unknown>) =>
+          // New format: tag_type + prompt
+          (s.tag_type === "DALLE" && typeof s.prompt === "string") ||
+          // Legacy format: dalle_prompt
+          typeof s.dalle_prompt === "string"
+        )
+        .map((s: Record<string, unknown>) =>
+          (s.tag_type === "DALLE" ? s.prompt : s.dalle_prompt) as string
+        );
     }
   } catch {
-    // If not JSON, try to extract prompts with regex
-    const matches = visuals.match(/dalle_prompt["\s:]+([^"]+)/g);
-    if (matches) prompts = matches.map(m => m.replace(/dalle_prompt["\s:]+/, "")).slice(0, 5);
+    // Fallback: extract prompts with regex from raw text
+    const matches = visuals.match(/(?:dalle_prompt|"prompt")["\s:]+["']([^"']+)/gi);
+    if (matches) prompts = matches.map(m => m.replace(/(?:dalle_prompt|"prompt")["\s:]+["']/i, "")).slice(0, 15);
   }
 
   if (prompts.length === 0) {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Generate up to 3 images in parallel (DALL-E takes ~15-20s each, parallel ≈ 20s total)
-  const maxImages = Math.min(prompts.length, 3);
-  const imagePromises = prompts.slice(0, maxImages).map(async (p, i) => {
-    try {
-      const img = await generateImage(key, p);
-      // Persist to Supabase Storage so URLs don't expire
-      const storedUrl = await downloadAndStore(
-        ctx.project.id, `dalle-scene-${i + 1}.png`, img.url, "image/png"
-      );
-      if (!storedUrl) {
-        console.error(`[image_generation] Failed to persist DALL-E image ${i + 1} to storage, using temp URL`);
-      }
-      return { prompt: p, url: storedUrl || img.url, revised_prompt: img.revisedPrompt, stored: !!storedUrl };
-    } catch (err) {
-      console.error(`[image_generation] Image ${i + 1} failed:`, err);
-      return null;
-    }
-  });
-  const results = await Promise.all(imagePromises);
-  const images = results.filter(Boolean) as { prompt: string; url: string; revised_prompt: string; stored: boolean }[];
+  // Generate up to 15 images (3 in parallel batches — DALL-E takes ~15-20s each)
+  const maxImages = Math.min(prompts.length, 15);
+  const batchSize = 3;
+  const images: { prompt: string; url: string; revised_prompt: string; stored: boolean }[] = [];
+
+  for (let batch = 0; batch < maxImages; batch += batchSize) {
+    const batchPrompts = prompts.slice(batch, batch + batchSize);
+    const batchResults = await Promise.all(
+      batchPrompts.map(async (p, batchIdx) => {
+        const i = batch + batchIdx;
+        try {
+          const img = await generateImage(key, sanitizePrompt(p));
+          const storedUrl = await downloadAndStore(
+            ctx.project.id, `dalle-scene-${i + 1}.png`, img.url, "image/png"
+          );
+          if (!storedUrl) {
+            console.error(`[image_generation] Failed to persist DALL-E image ${i + 1} to storage, using temp URL`);
+          }
+          return { prompt: p, url: storedUrl || img.url, revised_prompt: img.revisedPrompt, stored: !!storedUrl };
+        } catch (err) {
+          console.error(`[image_generation] Image ${i + 1} failed:`, err);
+          return null;
+        }
+      })
+    );
+    images.push(...batchResults.filter(Boolean) as typeof images);
+  }
 
   return {
     output: { status: "completed", images, total_prompts: prompts.length, generated: images.length },
