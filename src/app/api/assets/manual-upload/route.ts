@@ -104,27 +104,51 @@ export async function POST(request: Request) {
       source: "manual",
     });
 
-    // For runway hero scenes, also patch the hero_scenes step output so the
-    // assembler can find the video. Same for other asset types with step outputs.
+    // Patch step output so the assembler/audit can find the uploaded asset
     if (step !== "manual") {
       try {
         const steps = await getStepsByProject(projectId);
         const existing = steps.find((s) => s.step === step);
-        if (existing?.output) {
-          // Attempt to patch the step output with the new URL
+        const currentOutput = (existing?.output || {}) as Record<string, unknown>;
+
+        if (assetType === "runway_video") {
+          // Hero scenes: assembler reads heroScenes.scenes[].video_url
+          const scenes = Array.isArray(currentOutput.scenes) ? [...currentOutput.scenes] : [];
+          scenes.push({
+            section: slotName || `Hero Scene ${scenes.length + 1}`,
+            promptText: `Manually uploaded: ${file.name}`,
+            taskId: `manual_${Date.now()}`,
+            video_url: url,
+            source: "manual",
+          });
+          await upsertStep(projectId, step, {
+            output: { ...currentOutput, status: "completed", scenes },
+            modified_at: new Date().toISOString(),
+          } as Record<string, unknown>);
+        } else if (assetType === "dalle_image") {
+          // DALL-E images: assembler reads imageGen.images[].url
+          const images = Array.isArray(currentOutput.images) ? [...currentOutput.images] : [];
+          images.push({
+            prompt: `Manually uploaded: ${file.name}`,
+            url,
+            revised_prompt: slotName || file.name,
+            stored: true,
+            source: "manual",
+          });
+          await upsertStep(projectId, step, {
+            output: { ...currentOutput, status: "completed", images, generated: images.length, total_prompts: images.length },
+            modified_at: new Date().toISOString(),
+          } as Record<string, unknown>);
+        } else {
+          // Generic fallback — use path-based patching
           const patchKey = slotName || slotKey;
-          const patchedOutput = patchStepOutput(
-            existing.output as Record<string, unknown>,
-            patchKey,
-            url
-          );
+          const patchedOutput = patchStepOutput(currentOutput, patchKey, url);
           await upsertStep(projectId, step, {
             output: patchedOutput,
             modified_at: new Date().toISOString(),
           } as Record<string, unknown>);
         }
       } catch (patchErr) {
-        // Step output patching is best-effort
         console.warn("[manual-upload] Step output patch failed (non-fatal):", patchErr);
       }
     }
