@@ -36,6 +36,7 @@ export interface RunwayScene extends SceneBase {
 export interface MotionGraphicScene extends SceneBase {
   type: "MOTION_GRAPHIC";
   imageUrl?: string;
+  motionGraphicSpec?: string;
 }
 
 export type Scene = DalleScene | StockScene | RunwayScene | MotionGraphicScene;
@@ -259,6 +260,40 @@ export function buildManifest(
     | { motion_specs?: string }
     | undefined;
 
+  // Parse visual direction for motion graphic specs per scene
+  const visualDirection = getOutput("visual_direction") as { visuals?: string } | undefined;
+  const mgSpecMap = new Map<number, string>(); // scene number → spec string
+  if (visualDirection?.visuals) {
+    let vdCleaned = visualDirection.visuals.trim();
+    if (vdCleaned.startsWith("```")) {
+      vdCleaned = vdCleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+    }
+    try {
+      let vdParsed = JSON.parse(vdCleaned);
+      if (!Array.isArray(vdParsed) && typeof vdParsed === "object") {
+        for (const k of ["scenes", "data", "entries"]) {
+          if (Array.isArray(vdParsed[k])) { vdParsed = vdParsed[k]; break; }
+        }
+      }
+      if (Array.isArray(vdParsed)) {
+        for (const scene of vdParsed) {
+          if (scene.tag_type === "MOTION_GRAPHIC" && scene.scene) {
+            // Build spec string from visual direction fields
+            const layout = scene.layout_type || "title_card";
+            const text = scene.text_content || scene.narration || "";
+            const colours = typeof scene.colour_scheme === "string"
+              ? scene.colour_scheme
+              : typeof scene.colour_scheme === "object" && scene.colour_scheme
+                ? Object.entries(scene.colour_scheme).map(([k, v]) => `${k} ${v}`).join(" | ")
+                : "white #F0F0F4 on near-black #0D0D14";
+            const spec = `layout=${layout} | text="${text}" | ${colours}`;
+            mgSpecMap.set(Number(scene.scene), spec);
+          }
+        }
+      }
+    } catch {}
+  }
+
   const brandAssets = getOutput("brand_assets") as
     | { brand?: string }
     | undefined;
@@ -425,10 +460,13 @@ export function buildManifest(
         }
 
         case "MOTION_GRAPHIC": {
+          // Look up spec from visual direction by scene number, or from timing label
+          const mgSpec = mgSpecMap.get(entry.scene) || mgSpecMap.get(sceneIndex + 1) || undefined;
           scenes.push({
             ...base,
             type: "MOTION_GRAPHIC",
             imageUrl: undefined,
+            motionGraphicSpec: mgSpec,
           } as MotionGraphicScene);
           break;
         }

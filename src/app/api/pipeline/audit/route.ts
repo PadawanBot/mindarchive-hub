@@ -38,10 +38,13 @@ export async function POST(request: Request) {
 
     // Per-scene report
     const sceneReport = scenes.map((s) => {
+      const mgScene = s as import("../assemble/manifest-builder").MotionGraphicScene;
       const hasAsset =
-        s.type === "DALLE" || s.type === "MOTION_GRAPHIC"
-          ? !!(s as { imageUrl?: string }).imageUrl
-          : !!(s as { videoUrl?: string }).videoUrl;
+        s.type === "MOTION_GRAPHIC"
+          ? !!(mgScene.imageUrl || mgScene.motionGraphicSpec) // MG with spec will be rendered by worker
+          : s.type === "DALLE"
+            ? !!(s as { imageUrl?: string }).imageUrl
+            : !!(s as { videoUrl?: string }).videoUrl;
 
       const assetUrl =
         s.type === "DALLE" || s.type === "MOTION_GRAPHIC"
