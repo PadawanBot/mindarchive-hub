@@ -1,6 +1,8 @@
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { assembleVideo, assembleVideoV2 } from "./assembler";
+import { timingFromAudioUrl } from "./timing-from-audio";
+import { renderMotionGraphic, type MotionGraphicSpec } from "./motion-graphic-renderer";
 import { v4 as uuid } from "uuid";
 
 const app = express();
@@ -40,6 +42,8 @@ app.get("/health", (_req, res) => {
 // Apply auth to protected routes
 app.use("/assemble", authMiddleware);
 app.use("/llm", authMiddleware);
+app.use("/timing-from-audio", authMiddleware);
+app.use("/render-motion-graphic", authMiddleware);
 app.use("/status", authMiddleware);
 
 // ── Long-running LLM endpoint (no timeout) ──
@@ -275,6 +279,91 @@ app.post("/assemble", async (req, res) => {
   })();
 
   res.json({ jobId, status: "queued" });
+});
+
+// ── Timing from audio — detect speech pauses and build scene timing ──
+
+app.post("/timing-from-audio", async (req, res) => {
+  try {
+    const { audioUrl, sceneCount, sceneLabels, callbackUrl, projectId, step } = req.body;
+
+    if (!audioUrl || !sceneCount) {
+      return res.status(400).json({ error: "Missing audioUrl or sceneCount" });
+    }
+
+    const jobId = uuid();
+    console.log(`[timing] Job ${jobId}: ${sceneCount} scenes from ${audioUrl.slice(0, 80)}...`);
+
+    // Run async — callback when done
+    (async () => {
+      try {
+        const result = await timingFromAudioUrl(audioUrl, sceneCount, sceneLabels);
+        console.log(`[timing] Job ${jobId}: completed — ${result.timing.length} scenes, ${result.audioDuration.toFixed(1)}s audio`);
+
+        if (callbackUrl) {
+          try {
+            const cbRes = await fetch(callbackUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jobId,
+                projectId,
+                step,
+                status: "completed",
+                output: { timing: result.timing, audioDuration: result.audioDuration },
+              }),
+            });
+            if (!cbRes.ok) {
+              console.error(`[timing] Job ${jobId}: callback returned ${cbRes.status}`);
+            }
+          } catch (err) {
+            console.error(`[timing] Job ${jobId}: callback failed:`, err);
+          }
+        }
+      } catch (err) {
+        console.error(`[timing] Job ${jobId} failed:`, err);
+        if (callbackUrl) {
+          try {
+            await fetch(callbackUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId, projectId, step, status: "failed", error: String(err) }),
+            });
+          } catch {}
+        }
+      }
+    })();
+
+    res.json({ jobId, status: "queued" });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// ── Render a motion graphic card as PNG ──
+
+app.post("/render-motion-graphic", async (req, res) => {
+  try {
+    const { spec, width, height } = req.body as {
+      spec: MotionGraphicSpec;
+      width?: number;
+      height?: number;
+    };
+
+    if (!spec) {
+      return res.status(400).json({ error: "Missing spec" });
+    }
+
+    const png = await renderMotionGraphic(spec, {
+      width: width || 1920,
+      height: height || 1080,
+    });
+
+    res.setHeader("Content-Type", "image/png");
+    res.send(png);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 // Check job status
