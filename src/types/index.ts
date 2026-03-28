@@ -145,6 +145,23 @@ export interface TopicSuggestion {
   reasoning: string;
 }
 
+// ─── Topic Bank ───
+export type TopicStatus = "available" | "in_production" | "produced" | "archived";
+
+export interface TopicBankItem {
+  id: string;
+  profile_id: string;
+  title: string;
+  angle: string;
+  keywords: string[];
+  estimated_interest: "high" | "medium" | "low";
+  reasoning: string;
+  status: TopicStatus;
+  project_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Script ───
 export interface ScriptSection {
   id: string;

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAll, create } from "@/lib/store";
-import type { Project } from "@/types";
+import { getAll, create, update } from "@/lib/store";
+import type { Project, TopicBankItem } from "@/types";
 
 export async function GET() {
   try {
@@ -27,8 +27,24 @@ export async function POST(request: Request) {
       topic_data: body.topic_data || null,
       script_data: null,
       visual_data: null,
-      metadata: { additional_notes: body.additional_notes || "" },
+      metadata: {
+        additional_notes: body.additional_notes || "",
+        ...(body.topic_bank_id ? { topic_bank_id: body.topic_bank_id } : {}),
+      },
     } as Omit<Project, "id" | "created_at" | "updated_at">);
+
+    // Mark topic as in_production in the bank
+    if (body.topic_bank_id) {
+      try {
+        await update<TopicBankItem>("topic_bank", body.topic_bank_id, {
+          status: "in_production",
+          project_id: project.id,
+        } as Partial<TopicBankItem>);
+      } catch (err) {
+        console.error("[projects] Failed to update topic bank status:", err);
+      }
+    }
+
     return NextResponse.json({ success: true, data: project });
   } catch (error) {
     return NextResponse.json(

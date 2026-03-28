@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,7 +22,7 @@ import {
   Clock,
 } from "lucide-react";
 import Link from "next/link";
-import type { ChannelProfile, FormatPreset, TopicSuggestion } from "@/types";
+import type { ChannelProfile, FormatPreset, TopicSuggestion, TopicBankItem } from "@/types";
 
 type WizardStep = "setup" | "research" | "plan" | "confirm";
 
@@ -47,8 +47,17 @@ const PIPELINE_STEPS = [
   { id: "hero_scenes", label: "Hero Scenes", icon: Film, phase: "production" },
 ];
 
-export default function NewProductionPage() {
+export default function NewProductionPageWrapper() {
+  return (
+    <Suspense>
+      <NewProductionPage />
+    </Suspense>
+  );
+}
+
+function NewProductionPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [step, setStep] = useState<WizardStep>("setup");
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
   const [formats, setFormats] = useState<FormatPreset[]>([]);
@@ -58,6 +67,11 @@ export default function NewProductionPage() {
   const [profileId, setProfileId] = useState("");
   const [formatId, setFormatId] = useState("");
   const [nicheInput, setNicheInput] = useState("");
+
+  // Topic bank state
+  const [bankTopics, setBankTopics] = useState<TopicBankItem[]>([]);
+  const [topicBankId, setTopicBankId] = useState<string | null>(null);
+  const [showingBank, setShowingBank] = useState(false);
   const [topicSuggestions, setTopicSuggestions] = useState<TopicSuggestion[]>([]);
   const [selectedTopic, setSelectedTopic] = useState<TopicSuggestion | null>(null);
   const [customTopic, setCustomTopic] = useState("");
@@ -70,8 +84,35 @@ export default function NewProductionPage() {
     ]).then(([profilesData, formatsData]) => {
       if (profilesData.success) setProfiles(profilesData.data);
       if (formatsData.success) setFormats(formatsData.data);
+
+      // Handle deep-link from topic bank: /projects/new?topic_bank_id=X&profile_id=Y
+      const tbId = searchParams.get("topic_bank_id");
+      const pId = searchParams.get("profile_id");
+      if (tbId && pId) {
+        setProfileId(pId);
+        const p = (profilesData.data as ChannelProfile[])?.find((x) => x.id === pId);
+        if (p?.niche) setNicheInput(p.niche);
+        // Fetch the specific topic
+        fetch(`/api/topic-bank/${tbId}`).then(r => r.json()).then(d => {
+          if (d.success && d.data) {
+            const t = d.data as TopicBankItem;
+            setSelectedTopic({ title: t.title, angle: t.angle, keywords: t.keywords, estimated_interest: t.estimated_interest, reasoning: t.reasoning });
+            setTopicBankId(t.id);
+            setStep("plan");
+          }
+        });
+      }
     });
-  }, []);
+  }, [searchParams]);
+
+  // Fetch available bank topics when profile changes
+  useEffect(() => {
+    if (!profileId) { setBankTopics([]); return; }
+    fetch(`/api/topic-bank?profile_id=${profileId}&status=available`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setBankTopics(d.data); })
+      .catch(() => {});
+  }, [profileId]);
 
   const selectedProfile = profiles.find((p) => p.id === profileId);
   const selectedFormat = formats.find((f) => f.id === formatId);
@@ -115,6 +156,7 @@ export default function NewProductionPage() {
           profile_id: profileId,
           format_id: formatId,
           additional_notes: additionalNotes,
+          ...(topicBankId ? { topic_bank_id: topicBankId } : {}),
         }),
       });
       const text = await res.text();
@@ -281,11 +323,12 @@ export default function NewProductionPage() {
             </CardContent>
           </Card>
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {customTopic ? (
               <Button
                 onClick={() => {
                   setSelectedTopic(null);
+                  setTopicBankId(null);
                   setStep("plan");
                 }}
                 disabled={!profileId || !formatId}
@@ -294,19 +337,69 @@ export default function NewProductionPage() {
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             ) : (
-              <Button
-                onClick={handleResearch}
-                disabled={!profileId || !formatId || !nicheInput || loading}
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4 mr-2" />
+              <>
+                <Button
+                  onClick={handleResearch}
+                  disabled={!profileId || !formatId || !nicheInput || loading}
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4 mr-2" />
+                  )}
+                  {loading ? "Researching..." : "Research Topics"}
+                </Button>
+                {bankTopics.length > 0 && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowingBank(!showingBank)}
+                    disabled={!profileId || !formatId}
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Pick from Bank ({bankTopics.length})
+                  </Button>
                 )}
-                {loading ? "Researching..." : "Research Topics"}
-              </Button>
+              </>
             )}
           </div>
+
+          {/* Topic Bank picker */}
+          {showingBank && bankTopics.length > 0 && (
+            <Card>
+              <CardTitle>Topic Bank</CardTitle>
+              <CardDescription className="mt-1">
+                Select a topic from your saved bank to start production
+              </CardDescription>
+              <CardContent className="mt-4 space-y-2">
+                {bankTopics.map(topic => (
+                  <button
+                    key={topic.id}
+                    onClick={() => {
+                      setSelectedTopic({
+                        title: topic.title,
+                        angle: topic.angle,
+                        keywords: topic.keywords,
+                        estimated_interest: topic.estimated_interest,
+                        reasoning: topic.reasoning,
+                      });
+                      setTopicBankId(topic.id);
+                      setShowingBank(false);
+                      setStep("plan");
+                    }}
+                    className="w-full text-left p-3 rounded-lg border border-muted-foreground/10 hover:border-primary/50 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{topic.title}</span>
+                      <Badge variant={topic.estimated_interest === "high" ? "default" : "outline"} className="text-[10px]">
+                        {topic.estimated_interest}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{topic.angle}</p>
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

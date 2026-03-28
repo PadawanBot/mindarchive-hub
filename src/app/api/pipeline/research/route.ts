@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { getSetting } from "@/lib/store";
-import { getById } from "@/lib/store";
+import { getSetting, getById, create } from "@/lib/store";
 import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
-import type { ChannelProfile, TopicSuggestion } from "@/types";
+import type { ChannelProfile, TopicSuggestion, TopicBankItem } from "@/types";
 
 const RESEARCH_SYSTEM_PROMPT = `You are a YouTube content strategist specializing in faceless channel growth.
 Your job is to suggest compelling video topics that will perform well on YouTube.
@@ -91,6 +90,25 @@ export async function POST(request: Request) {
     }
 
     const suggestions: TopicSuggestion[] = JSON.parse(jsonMatch[0]);
+
+    // Auto-save all suggestions to topic bank (fire-and-forget)
+    if (profile_id) {
+      try {
+        for (const topic of suggestions) {
+          await create<TopicBankItem>("topic_bank", {
+            profile_id,
+            title: topic.title,
+            angle: topic.angle,
+            keywords: topic.keywords,
+            estimated_interest: topic.estimated_interest,
+            reasoning: topic.reasoning,
+            status: "available",
+          } as Omit<TopicBankItem, "id" | "created_at" | "updated_at">);
+        }
+      } catch (err) {
+        console.error("[research] Failed to auto-bank topics:", err);
+      }
+    }
 
     return NextResponse.json({ success: true, data: suggestions });
   } catch (error) {

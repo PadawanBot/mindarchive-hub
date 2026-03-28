@@ -46,6 +46,7 @@ const tableMap: Record<string, string> = {
   assets: "assets",
   cost_ledger: "cost_ledger",
   pipeline_steps: "pipeline_steps",
+  topic_bank: "topic_bank",
 };
 
 function tableName(collection: string): string {
@@ -190,6 +191,34 @@ export async function remove<T extends { id: string }>(
   if (filtered.length === items.length) return false;
   await store.write(`${collection}.json`, filtered);
   return true;
+}
+
+// ─── Generic filtered query ───
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getByField<T extends Record<string, any>>(
+  collection: string,
+  field: string,
+  value: string
+): Promise<T[]> {
+  const sb = getSupabase();
+  if (sb) {
+    const { data, error } = await sb
+      .from(tableName(collection))
+      .select("*")
+      .eq(field, value)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error(`[store] getByField(${collection}, ${field}) error:`, error.message);
+      return [];
+    }
+    return (data || []) as T[];
+  }
+  const store = await getLocalStore();
+  const items = await store.read<T>(`${collection}.json`);
+  return items
+    .filter((item) => item[field] === value)
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 
 // ─── Settings (key-value) ───

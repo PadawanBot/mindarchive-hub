@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Save, Trash2, Loader2 } from "lucide-react";
 import type { ChannelProfile } from "@/types";
+import { TopicBankList } from "@/components/topic-bank-list";
 
 export default function ProfileDetailPage() {
   const params = useParams();
@@ -208,6 +209,9 @@ export default function ProfileDetailPage() {
         </Button>
         {saved && <span className="text-sm text-success">Saved!</span>}
       </div>
+
+      {/* Topic Bank */}
+      <TopicBankList profileId={params.id as string} />
     </div>
   );
 }
