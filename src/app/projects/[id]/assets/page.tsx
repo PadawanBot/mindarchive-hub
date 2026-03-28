@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   ArrowLeft,
   Image as ImageIcon,
@@ -14,8 +17,10 @@ import {
   RefreshCw,
   ExternalLink,
   Trash2,
+  Upload,
+  Plus,
+  X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 interface AssetRow {
   id: string;
@@ -40,10 +45,39 @@ const STEP_LABELS: Record<string, string> = {
   motion_graphics: "Motion Graphics",
   thumbnail_creation: "Thumbnail",
   hero_scenes: "Hero Scenes",
+  manual: "Manual Uploads",
+};
+
+/** Maps step names to asset_type values for the upload API */
+const STEP_TO_ASSET_TYPE: Record<string, string> = {
+  image_generation: "dalle_image",
+  hero_scenes: "runway_video",
+  stock_footage: "stock_video",
+  voiceover_generation: "voiceover",
+  motion_graphics: "motion_graphic",
+  manual: "other",
+};
+
+const ASSET_TYPE_OPTIONS = [
+  { value: "dalle_image", label: "DALL-E Image" },
+  { value: "runway_video", label: "Runway Hero Scene" },
+  { value: "stock_video", label: "Stock Video" },
+  { value: "voiceover", label: "Voiceover" },
+  { value: "motion_graphic", label: "Motion Graphic" },
+  { value: "other", label: "Other" },
+];
+
+const ACCEPT_MAP: Record<string, string> = {
+  dalle_image: "image/*",
+  runway_video: "video/*",
+  stock_video: "video/*",
+  voiceover: "audio/*",
+  motion_graphic: "image/*",
+  other: "image/*,video/*,audio/*",
 };
 
 function formatSize(bytes: number): string {
-  if (bytes === 0) return "—";
+  if (bytes === 0) return "\u2014";
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
@@ -62,6 +96,272 @@ function formatDate(iso: string): string {
   }
 }
 
+// ─── Upload Modal ────────────────────────────────────────────────────────────
+
+interface UploadModalProps {
+  projectId: string;
+  defaultAssetType?: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function UploadModal({ projectId, defaultAssetType, onClose, onSuccess }: UploadModalProps) {
+  const [assetType, setAssetType] = useState(defaultAssetType || "dalle_image");
+  const [slotName, setSlotName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0] || null;
+    setFile(selected);
+    setError("");
+  };
+
+  const handleUpload = async () => {
+    if (!file) {
+      setError("Please select a file");
+      return;
+    }
+
+    setUploading(true);
+    setProgress(10);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("project_id", projectId);
+      formData.append("asset_type", assetType);
+      if (slotName.trim()) {
+        formData.append("slot_name", slotName.trim());
+      }
+
+      setProgress(30);
+
+      const res = await fetch("/api/assets/manual-upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      setProgress(80);
+
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || "Upload failed");
+        setUploading(false);
+        setProgress(0);
+        return;
+      }
+
+      setProgress(100);
+
+      // Brief delay to show 100% before closing
+      setTimeout(() => {
+        setUploading(false);
+        onSuccess();
+        onClose();
+      }, 400);
+    } catch (err) {
+      setError(String(err));
+      setUploading(false);
+      setProgress(0);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Upload Asset</h2>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Asset Type */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-muted-foreground">Asset Type</label>
+          <Select
+            value={assetType}
+            onChange={(e) => {
+              setAssetType(e.target.value);
+              setFile(null);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+          >
+            {ASSET_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Slot Name (optional) */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-muted-foreground">
+            Slot Name <span className="text-xs text-muted-foreground/60">(optional)</span>
+          </label>
+          <Input
+            placeholder="e.g. runway-scene-3, dalle-scene-5"
+            value={slotName}
+            onChange={(e) => setSlotName(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground/60">
+            Specify a slot name to replace a specific asset (e.g. &quot;scenes[2].video_url&quot;)
+          </p>
+        </div>
+
+        {/* File Picker */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-muted-foreground">File</label>
+          <div
+            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {file ? (
+              <div className="space-y-1">
+                <p className="text-sm font-medium truncate">{file.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatSize(file.size)} &middot; {file.type || "unknown type"}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Upload className="w-8 h-8 mx-auto text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">Click to select a file</p>
+                <p className="text-xs text-muted-foreground/60">Max 50MB</p>
+              </div>
+            )}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPT_MAP[assetType] || "*/*"}
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </div>
+
+        {/* Progress bar */}
+        {uploading && (
+          <div className="space-y-1">
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground text-center">
+              Uploading... {progress}%
+            </p>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-3 justify-end pt-1">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={uploading}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleUpload} disabled={uploading || !file}>
+            <Upload className="w-4 h-4 mr-1.5" />
+            {uploading ? "Uploading..." : "Upload"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Inline Upload Button ────────────────────────────────────────────────────
+
+interface InlineUploadProps {
+  projectId: string;
+  step: string;
+  onSuccess: () => void;
+}
+
+function InlineUploadButton({ projectId, step, onSuccess }: InlineUploadProps) {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const assetType = STEP_TO_ASSET_TYPE[step] || "other";
+  const accept = ACCEPT_MAP[assetType] || "*/*";
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("project_id", projectId);
+      formData.append("asset_type", assetType);
+
+      const res = await fetch("/api/assets/manual-upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        onSuccess();
+      }
+    } catch {
+      // silently fail inline uploads
+    }
+    setUploading(false);
+    // Reset input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        disabled={uploading}
+        className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-dashed border-muted-foreground/30 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors disabled:opacity-50"
+        title={`Upload ${STEP_LABELS[step] || step} asset`}
+      >
+        {uploading ? (
+          <RefreshCw className="w-3 h-3 animate-spin" />
+        ) : (
+          <Plus className="w-3 h-3" />
+        )}
+        {uploading ? "Uploading..." : "Upload"}
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={accept}
+        onChange={handleFile}
+        className="hidden"
+      />
+    </>
+  );
+}
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+
 export default function AssetLibraryPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -70,6 +370,8 @@ export default function AssetLibraryPage() {
   const [filter, setFilter] = useState<"all" | "image" | "audio" | "video">("all");
   const [syncing, setSyncing] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadModalAssetType, setUploadModalAssetType] = useState<string | undefined>(undefined);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -125,6 +427,11 @@ export default function AssetLibraryPage() {
 
   const totalStorage = assets.reduce((sum, a) => sum + (a.size_bytes || 0), 0);
 
+  const openUploadModal = (assetType?: string) => {
+    setUploadModalAssetType(assetType);
+    setShowUploadModal(true);
+  };
+
   return (
     <div className="container max-w-5xl mx-auto py-8 px-4 space-y-6">
       {/* Header */}
@@ -135,15 +442,16 @@ export default function AssetLibraryPage() {
         <div className="flex-1">
           <h1 className="text-xl font-bold">Asset Library</h1>
           <p className="text-sm text-muted-foreground">
-            View and manage all production assets. Upload and replace assets on the{" "}
-            <Link href={`/projects/${projectId}`} className="text-primary hover:underline">
-              Pipeline tab
-            </Link>.
+            View, manage, and upload production assets.
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={syncAssets} disabled={syncing || loading}>
           <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
           {syncing ? "Syncing..." : "Sync"}
+        </Button>
+        <Button size="sm" onClick={() => openUploadModal()}>
+          <Upload className="h-4 w-4 mr-1.5" />
+          Upload Asset
         </Button>
       </div>
 
@@ -195,6 +503,12 @@ export default function AssetLibraryPage() {
               <Badge variant="outline" className="text-xs">
                 {stepAssets.length} asset{stepAssets.length !== 1 ? "s" : ""}
               </Badge>
+              <div className="flex-1" />
+              <InlineUploadButton
+                projectId={projectId}
+                step={step}
+                onSuccess={loadData}
+              />
             </CardTitle>
             <CardContent className="mt-2 p-0">
               <div className="overflow-x-auto">
@@ -237,7 +551,7 @@ export default function AssetLibraryPage() {
                           )}
                         </td>
                         <td className="py-2 px-4 text-muted-foreground">
-                          {asset.slot_key || "—"}
+                          {asset.slot_key || "\u2014"}
                         </td>
                         <td className="py-2 px-4">
                           <Badge
@@ -251,7 +565,7 @@ export default function AssetLibraryPage() {
                           {formatSize(asset.size_bytes)}
                         </td>
                         <td className="py-2 px-4 text-muted-foreground">
-                          {asset.width && asset.height ? `${asset.width}×${asset.height}` : ""}
+                          {asset.width && asset.height ? `${asset.width}\u00d7${asset.height}` : ""}
                           {asset.duration_ms ? `${(asset.duration_ms / 1000).toFixed(1)}s` : ""}
                         </td>
                         <td className="py-2 px-4 text-muted-foreground">
@@ -295,16 +609,29 @@ export default function AssetLibraryPage() {
           <p className="text-sm">No assets found</p>
           <p className="text-xs mt-1">
             Run the pipeline or{" "}
-            <Link href={`/projects/${projectId}`} className="text-primary hover:underline">
+            <button
+              onClick={() => openUploadModal()}
+              className="text-primary hover:underline"
+            >
               upload assets
-            </Link>{" "}
-            on the Pipeline tab
+            </button>{" "}
+            to get started.
           </p>
         </div>
       )}
 
       {loading && (
         <div className="text-center text-muted-foreground py-8">Loading assets...</div>
+      )}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <UploadModal
+          projectId={projectId}
+          defaultAssetType={uploadModalAssetType}
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={loadData}
+        />
       )}
     </div>
   );
