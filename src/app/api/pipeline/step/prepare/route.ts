@@ -70,11 +70,77 @@ export async function POST(request: Request) {
       : undefined;
     const settings = await getAllSettings();
 
+    const workerUrl = process.env.WORKER_URL;
+
     // Build prompt for this step
     const prompt = buildPrompt(step as PipelineStep, { project, profile, format, previousSteps: existingSteps, settings });
 
     if (!prompt) {
-      // Non-LLM step (voiceover, image gen, etc.) — run directly
+      // Route image_generation to EC2 worker (DALL-E calls exceed Vercel 60s timeout)
+      if (step === "image_generation" && workerUrl) {
+        const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+        // Extract DALL-E prompts from visual direction (same logic as executor)
+        const visualStep = existingSteps.find(s => s.step === "visual_direction");
+        const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
+        let dallePrompts: string[] = [];
+        let cleaned = visuals.trim();
+        if (cleaned.startsWith("```")) {
+          cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+        }
+        try {
+          let parsed = JSON.parse(cleaned);
+          if (!Array.isArray(parsed) && typeof parsed === "object") {
+            for (const k of ["scenes", "data", "entries"]) {
+              if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+            }
+          }
+          if (Array.isArray(parsed)) {
+            dallePrompts = parsed
+              .filter((s: Record<string, unknown>) =>
+                (s.tag_type === "DALLE" && typeof s.prompt === "string") ||
+                typeof s.dalle_prompt === "string"
+              )
+              .map((s: Record<string, unknown>) =>
+                (s.tag_type === "DALLE" ? s.prompt : s.dalle_prompt) as string
+              )
+              .slice(0, 15);
+          }
+        } catch {}
+
+        if (dallePrompts.length > 0) {
+          try {
+            const workerRes = await fetch(`${workerUrl}/generate-images`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+              },
+              body: JSON.stringify({
+                projectId: project_id,
+                prompts: dallePrompts,
+                callbackUrl,
+              }),
+            });
+
+            if (workerRes.ok) {
+              const { jobId } = await workerRes.json();
+              console.log(`[prepare] image_generation routed to worker — job ${jobId}, ${dallePrompts.length} prompts`);
+              return NextResponse.json({
+                success: true,
+                data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+              });
+            } else {
+              const errText = await workerRes.text();
+              console.error(`[prepare] Worker /generate-images failed: ${errText}`);
+            }
+          } catch (err) {
+            console.error(`[prepare] Failed to reach worker for image_generation:`, err);
+          }
+        }
+      }
+
+      // Non-LLM step (voiceover, etc.) — run directly via Vercel
       return NextResponse.json({
         success: true,
         data: { needs_llm: false, step, project_id },
@@ -87,7 +153,6 @@ export async function POST(request: Request) {
 
     // Route long-running LLM steps to EC2 worker (no timeout constraint)
     const WORKER_ROUTED_STEPS = ["script_writing", "script_refinement", "visual_direction", "blend_curator", "timing_sync"];
-    const workerUrl = process.env.WORKER_URL;
 
     if (WORKER_ROUTED_STEPS.includes(step) && workerUrl && provider === "anthropic") {
       // Build callback URL — always use production URL to avoid Vercel deployment protection on preview URLs

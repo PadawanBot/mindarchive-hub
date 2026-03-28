@@ -14,7 +14,7 @@ export const maxDuration = 30;
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { step, projectId, status, text, inputTokens, outputTokens, model, error } = body;
+    const { step, projectId, status, text, inputTokens, outputTokens, model, error, output, cost_cents } = body;
 
     if (!step || !projectId) {
       return NextResponse.json({ success: false, error: "Missing step or projectId" }, { status: 400 });
@@ -34,15 +34,32 @@ export async function POST(request: Request) {
     if (status === "failed") {
       await upsertStep(projectId, step, {
         status: "failed",
-        output: { error: error || "Worker LLM call failed" },
+        output: { error: error || "Worker call failed" },
         completed_at: new Date().toISOString(),
       });
       return NextResponse.json({ success: true, data: { status: "failed" } });
     }
 
-    // Handle success — same save logic as /api/pipeline/step/save
+    // Handle direct output from worker (image_generation, etc.)
+    // Worker sends {output, cost_cents} directly instead of {text}
+    if (output && !text) {
+      await upsertStep(projectId, step, {
+        status: "completed",
+        output,
+        cost_cents: cost_cents || 0,
+        completed_at: new Date().toISOString(),
+      });
+
+      // Auto-sync asset records
+      await syncStepAssets(projectId, step, output);
+
+      console.log(`[llm-callback] Step ${step} for project ${projectId} saved (direct output) — cost: ${cost_cents}c`);
+      return NextResponse.json({ success: true });
+    }
+
+    // Handle LLM text response — same save logic as /api/pipeline/step/save
     if (!text) {
-      return NextResponse.json({ success: false, error: "No text in callback" }, { status: 400 });
+      return NextResponse.json({ success: false, error: "No text or output in callback" }, { status: 400 });
     }
 
     const saveData = buildSaveData(
