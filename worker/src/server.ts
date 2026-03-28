@@ -46,6 +46,8 @@ app.get("/health", (_req, res) => {
 // Apply auth to protected routes
 app.use("/assemble", authMiddleware);
 app.use("/llm", authMiddleware);
+app.use("/generate-images", authMiddleware);
+app.use("/generate-voiceover", authMiddleware);
 app.use("/timing-from-audio", authMiddleware);
 app.use("/render-motion-graphic", authMiddleware);
 app.use("/status", authMiddleware);
@@ -283,6 +285,254 @@ app.post("/assemble", async (req, res) => {
   })();
 
   res.json({ jobId, status: "queued" });
+});
+
+// ── Generate DALL-E images in parallel batches → R2 ──
+
+app.post("/generate-images", async (req, res) => {
+  const { projectId, prompts, callbackUrl } = req.body;
+
+  if (!projectId || !prompts?.length) {
+    return res.status(400).json({ error: "Missing projectId or prompts" });
+  }
+
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!openaiKey) {
+    return res.status(500).json({ error: "OPENAI_API_KEY not configured on worker" });
+  }
+
+  const jobId = uuid();
+  console.log(`[images] Job ${jobId}: ${prompts.length} DALL-E prompts for project ${projectId}`);
+  res.json({ jobId, status: "queued" });
+
+  // Run async
+  (async () => {
+    try {
+      const batchSize = 5;
+      const maxImages = Math.min(prompts.length, 15);
+      const images: { url: string; prompt: string; revised_prompt: string; stored: boolean }[] = [];
+
+      // Phase 1: Generate in parallel batches
+      for (let batch = 0; batch < maxImages; batch += batchSize) {
+        const batchPrompts = (prompts as string[]).slice(batch, batch + batchSize);
+        console.log(`[images] Job ${jobId}: batch ${Math.floor(batch / batchSize) + 1} — ${batchPrompts.length} images`);
+
+        const results = await Promise.all(
+          batchPrompts.map(async (prompt: string, batchIdx: number) => {
+            const i = batch + batchIdx;
+            try {
+              const dalleRes = await fetch("https://api.openai.com/v1/images/generations", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${openaiKey}`,
+                },
+                body: JSON.stringify({
+                  model: "dall-e-3",
+                  prompt,
+                  n: 1,
+                  size: "1792x1024",
+                  quality: "hd",
+                }),
+              });
+
+              if (!dalleRes.ok) {
+                const err = await dalleRes.text();
+                console.error(`[images] Job ${jobId}: DALL-E ${i + 1} failed: ${err.slice(0, 200)}`);
+                return null;
+              }
+
+              const dalleData = await dalleRes.json() as {
+                data: { url: string; revised_prompt: string }[];
+              };
+              const imgUrl = dalleData.data[0]?.url;
+              const revisedPrompt = dalleData.data[0]?.revised_prompt || "";
+
+              if (!imgUrl) return null;
+
+              // Download and upload to R2
+              const imgRes = await fetch(imgUrl);
+              if (!imgRes.ok) return null;
+              const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+              const tmpPath = path.join(os.tmpdir(), `dalle-${jobId}-${i}.png`);
+              await fs.writeFile(tmpPath, imgBuffer);
+
+              const r2Key = `images/${projectId}/dalle-scene-${String(i + 1).padStart(3, "0")}.png`;
+              const publicUrl = await uploadToR2(tmpPath, r2Key, "image/png");
+              await fs.unlink(tmpPath).catch(() => {});
+
+              return { url: publicUrl, prompt, revised_prompt: revisedPrompt, stored: true };
+            } catch (err) {
+              console.error(`[images] Job ${jobId}: image ${i + 1} failed:`, err);
+              return null;
+            }
+          })
+        );
+
+        images.push(...results.filter(Boolean) as typeof images);
+      }
+
+      console.log(`[images] Job ${jobId}: completed — ${images.length}/${maxImages} images generated`);
+
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "image_generation",
+              status: "completed",
+              output: {
+                status: "completed",
+                images,
+                total_prompts: prompts.length,
+                generated: images.length,
+              },
+              cost_cents: images.length * 8, // ~$0.08 per DALL-E 3 HD
+            }),
+          });
+        } catch (err) {
+          console.error(`[images] Job ${jobId}: callback failed:`, err);
+        }
+      }
+    } catch (err) {
+      console.error(`[images] Job ${jobId} failed:`, err);
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "image_generation",
+              status: "failed",
+              error: String(err),
+            }),
+          });
+        } catch {}
+      }
+    }
+  })();
+});
+
+// ── Generate voiceover via ElevenLabs → R2 ──
+
+app.post("/generate-voiceover", async (req, res) => {
+  const { projectId, text, voiceId, modelId, voiceSettings, elevenLabsKey, callbackUrl } = req.body;
+
+  if (!projectId || !text || !voiceId || !elevenLabsKey) {
+    return res.status(400).json({ error: "Missing projectId, text, voiceId, or elevenLabsKey" });
+  }
+
+  const jobId = uuid();
+  const wordCount = text.split(/\s+/).length;
+  console.log(`[voiceover] Job ${jobId}: ${wordCount} words, voice ${voiceId}`);
+  res.json({ jobId, status: "queued" });
+
+  // Run async
+  (async () => {
+    try {
+      const ttsRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": elevenLabsKey,
+            "Content-Type": "application/json",
+            Accept: "audio/mpeg",
+          },
+          body: JSON.stringify({
+            text,
+            model_id: modelId || "eleven_multilingual_v2",
+            voice_settings: voiceSettings || {
+              stability: 0.5,
+              similarity_boost: 0.75,
+              style: 0.5,
+              use_speaker_boost: true,
+            },
+          }),
+        }
+      );
+
+      if (!ttsRes.ok) {
+        const errText = await ttsRes.text();
+        throw new Error(`ElevenLabs API error ${ttsRes.status}: ${errText.slice(0, 300)}`);
+      }
+
+      // Read full audio stream
+      const chunks: Buffer[] = [];
+      const reader = ttsRes.body?.getReader();
+      if (!reader) throw new Error("No response body from ElevenLabs");
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(Buffer.from(value));
+      }
+
+      const audioBuffer = Buffer.concat(chunks);
+      const totalBytes = audioBuffer.length;
+      console.log(`[voiceover] Job ${jobId}: received ${(totalBytes / 1024 / 1024).toFixed(1)} MB audio`);
+
+      // Upload to R2
+      const tmpPath = path.join(os.tmpdir(), `voiceover-${jobId}.mp3`);
+      await fs.writeFile(tmpPath, audioBuffer);
+
+      const r2Key = `audio/${projectId}/voiceover.mp3`;
+      const audioUrl = await uploadToR2(tmpPath, r2Key, "audio/mpeg");
+      await fs.unlink(tmpPath).catch(() => {});
+
+      const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
+
+      console.log(`[voiceover] Job ${jobId}: uploaded to ${audioUrl}`);
+
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "voiceover_generation",
+              status: "completed",
+              output: {
+                status: "completed",
+                voice_id: voiceId,
+                narration_length: text.length,
+                word_count: wordCount,
+                estimated_duration_minutes: estimatedDurationMin,
+                audio_confirmed: true,
+                audio_url: audioUrl,
+                audio_size_bytes: totalBytes,
+                note: "Audio uploaded to R2 via worker.",
+              },
+              cost_cents: Math.ceil(text.length * 0.003),
+            }),
+          });
+        } catch (err) {
+          console.error(`[voiceover] Job ${jobId}: callback failed:`, err);
+        }
+      }
+    } catch (err) {
+      console.error(`[voiceover] Job ${jobId} failed:`, err);
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "voiceover_generation",
+              status: "failed",
+              error: String(err),
+            }),
+          });
+        } catch {}
+      }
+    }
+  })();
 });
 
 // ── Timing from audio — detect speech pauses and build scene timing ──
