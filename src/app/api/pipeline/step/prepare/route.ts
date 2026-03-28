@@ -210,6 +210,66 @@ export async function POST(request: Request) {
         }
       }
 
+      // Route timing_sync to EC2 worker's audio-driven timing endpoint (gold standard: ffmpeg silencedetect)
+      if (step === "timing_sync" && workerUrl) {
+        const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+        // Get voiceover URL from previous step
+        const voiceoverStep = existingSteps.find(s => s.step === "voiceover_generation" && s.status === "completed");
+        const voiceoverOutput = voiceoverStep?.output as { audio_url?: string } | undefined;
+        const voiceoverUrl = voiceoverOutput?.audio_url;
+
+        // Get visual direction scenes array
+        const visualStep = existingSteps.find(s => s.step === "visual_direction" && s.status === "completed");
+        const visualOutput = (visualStep?.output as { visuals?: string })?.visuals || "";
+        let scenes: Record<string, unknown>[] = [];
+        try {
+          let cleaned = visualOutput.trim();
+          if (cleaned.startsWith("```")) {
+            cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+          }
+          const parsed = JSON.parse(cleaned);
+          scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || parsed.data || []);
+        } catch {
+          console.error("[prepare] Failed to parse visual direction scenes for timing_sync");
+        }
+
+        if (voiceoverUrl && scenes.length > 0) {
+          try {
+            const workerRes = await fetch(`${workerUrl}/timing-from-audio`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+              },
+              body: JSON.stringify({
+                projectId: project_id,
+                voiceoverUrl,
+                scenes,
+                callbackUrl,
+              }),
+            });
+
+            if (workerRes.ok) {
+              const { jobId } = await workerRes.json();
+              console.log(`[prepare] timing_sync routed to worker /timing-from-audio — job ${jobId}, ${scenes.length} scenes, audio: ${voiceoverUrl}`);
+              return NextResponse.json({
+                success: true,
+                data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+              });
+            } else {
+              const errText = await workerRes.text();
+              console.error(`[prepare] Worker /timing-from-audio failed: ${errText}`);
+              // Fall through to LLM-based timing as fallback
+            }
+          } catch (err) {
+            console.error(`[prepare] Failed to reach worker for timing-from-audio:`, err);
+          }
+        } else {
+          console.warn(`[prepare] timing_sync: missing voiceover (${!!voiceoverUrl}) or scenes (${scenes.length}) — falling back to LLM`);
+        }
+      }
+
       // Non-LLM step (motion_graphics, stock_footage, etc.) — run directly via Vercel
       return NextResponse.json({
         success: true,
@@ -222,7 +282,7 @@ export async function POST(request: Request) {
     const model = profile?.llm_model || settings.default_model || settings.default_llm_model || "claude-sonnet-4-6";
 
     // Route long-running LLM steps to EC2 worker (no timeout constraint)
-    const WORKER_ROUTED_STEPS = ["script_writing", "script_refinement", "visual_direction", "blend_curator", "timing_sync"];
+    const WORKER_ROUTED_STEPS = ["script_writing", "script_refinement", "visual_direction", "blend_curator"];
 
     if (WORKER_ROUTED_STEPS.includes(step) && workerUrl && provider === "anthropic") {
       // Build callback URL — always use production URL to avoid Vercel deployment protection on preview URLs
