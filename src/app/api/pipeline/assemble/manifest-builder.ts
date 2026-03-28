@@ -367,13 +367,34 @@ export function buildManifest(
     warnings.push("No timing data found — using fallback (even distribution of DALLE images)");
   }
 
+  // ── Compute actual audio duration and scale timing if needed ──
+  // The voiceover is the production clock — timing must match audio length
+  const voiceoverOutput = voiceover as Record<string, unknown>;
+  const audioDuration =
+    (typeof voiceoverOutput.audio_duration_seconds === "number" ? voiceoverOutput.audio_duration_seconds : 0) ||
+    (voiceover.estimated_duration_minutes || 7) * 60;
+
+  // Check if timing needs scaling — LLM timing estimates are often too short
+  const timingTotal = timingData.length > 0
+    ? Math.max(...timingData.map(t => t.end_time_seconds))
+    : 0;
+
+  let timeScale = 1;
+  if (timingTotal > 0 && audioDuration > 0) {
+    const ratio = audioDuration / timingTotal;
+    // Only scale if timing is significantly shorter than audio (>20% mismatch)
+    if (ratio > 1.2) {
+      timeScale = ratio;
+      warnings.push(`Timing total (${Math.round(timingTotal)}s) is shorter than audio (${Math.round(audioDuration)}s) — scaling scenes by ${timeScale.toFixed(2)}x`);
+    }
+  }
+
   // ── Build scenes ──
   const scenes: Scene[] = [];
   let dalleIdx = 0;
   let stockIdx = 0;
   let heroIdx = 0;
   const usedDalleIndices = new Set<number>();
-  const audioDuration = (voiceover.estimated_duration_minutes || 7) * 60;
 
   // Helper: pick the best DALL-E image for a timing entry
   const pickDalleImage = (entry: TimingEntry) => {
@@ -394,8 +415,9 @@ export function buildManifest(
   if (timingData.length > 0) {
     for (const entry of timingData) {
       const sceneIndex = entry.scene;
-      const startTime = entry.start_time_seconds;
-      const endTime = entry.end_time_seconds;
+      // Apply time scaling if timing is shorter than audio
+      const startTime = +(entry.start_time_seconds * timeScale).toFixed(2);
+      const endTime = +(entry.end_time_seconds * timeScale).toFixed(2);
       const transIn = parseTransition(entry.transition_in);
       const transOut = parseTransition(entry.transition_out);
 
