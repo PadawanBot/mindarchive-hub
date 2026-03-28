@@ -187,8 +187,8 @@ CRITICAL RULES:
 3. Include a final entry for the End Card (tag_type: "MOTION_GRAPHIC", duration: 12, label: "End Card").
 4. Duration of each scene is derived from the word count of that section at the given WPM.
 5. PRESERVE the tag_type assignments from the visual direction — do not make everything DALLE.`,
-        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script:\n${script.slice(0, 6000)}\n\nVisual direction plan (PRESERVE the tag_type assignments):\n${visuals.slice(0, 25000)}\n\nBlend curator plan:\n${blend.slice(0, 10000)}`,
-        maxTokens: 8192,
+        user: `Create timing sync for this production:\n\nNarration WPM: ${wpm}\n\nRefined script (COMPLETE — process ALL sections):\n${script.slice(0, 25000)}\n\nVisual direction plan (PRESERVE the tag_type assignments — EVERY scene must appear in the timing):\n${visuals.slice(0, 50000)}\n\nBlend curator plan:\n${blend.slice(0, 15000)}\n\nIMPORTANT: You MUST produce a timing entry for EVERY scene in the visual direction plan. Do NOT stop after a few sections. The complete video has 15-25 scenes.`,
+        maxTokens: 16384,
       };
     }
 
