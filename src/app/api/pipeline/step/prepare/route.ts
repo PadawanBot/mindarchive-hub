@@ -271,6 +271,87 @@ export async function POST(request: Request) {
         }
       }
 
+      // Route hero_scenes to EC2 worker (Runway polling exceeds Vercel 60s timeout)
+      if (step === "hero_scenes" && workerUrl) {
+        const runwayKey = settings.runway_key;
+        if (runwayKey) {
+          const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+          // Extract RUNWAY prompts from visual direction
+          const visualStep = existingSteps.find(s => s.step === "visual_direction");
+          const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
+          let heroScenes: { section: string; promptText: string }[] = [];
+
+          try {
+            let cleaned = visuals.trim();
+            if (cleaned.startsWith("```")) {
+              cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+            }
+            let parsed = JSON.parse(cleaned);
+            if (!Array.isArray(parsed) && typeof parsed === "object") {
+              for (const k of ["scenes", "data", "entries"]) {
+                if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+              }
+            }
+            if (Array.isArray(parsed)) {
+              heroScenes = parsed
+                .filter((s: Record<string, unknown>) =>
+                  s.tag_type === "RUNWAY" && (typeof s.prompt === "string" || typeof s.dalle_prompt === "string")
+                )
+                .map((s: Record<string, unknown>) => ({
+                  section: String(s.scene || s.section || "Hero Scene"),
+                  promptText: String(s.prompt || s.dalle_prompt),
+                }))
+                .slice(0, 5);
+            }
+          } catch {}
+
+          // Fallback: extract from script if no RUNWAY tags in visual direction
+          if (heroScenes.length === 0) {
+            const scriptStep = existingSteps.find(s => s.step === "script_refinement" || s.step === "script_writing");
+            const script = (scriptStep?.output as { refined_script?: string; script?: string })?.refined_script
+              || (scriptStep?.output as { script?: string })?.script || "";
+            const runwayMatches = script.match(/\[RUNWAY:\s*([^\]]+)\]/gi) || [];
+            heroScenes = runwayMatches.slice(0, 5).map((m, i) => ({
+              section: `Hero Scene ${i + 1}`,
+              promptText: m.replace(/\[RUNWAY:\s*/i, "").replace(/\]$/, "").trim(),
+            }));
+          }
+
+          if (heroScenes.length > 0) {
+            try {
+              const workerRes = await fetch(`${workerUrl}/generate-hero-scenes`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+                },
+                body: JSON.stringify({
+                  projectId: project_id,
+                  scenes: heroScenes,
+                  runwayKey,
+                  callbackUrl,
+                }),
+              });
+
+              if (workerRes.ok) {
+                const { jobId } = await workerRes.json();
+                console.log(`[prepare] hero_scenes routed to worker — job ${jobId}, ${heroScenes.length} scenes`);
+                return NextResponse.json({
+                  success: true,
+                  data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+                });
+              } else {
+                const errText = await workerRes.text();
+                console.error(`[prepare] Worker /generate-hero-scenes failed: ${errText}`);
+              }
+            } catch (err) {
+              console.error(`[prepare] Failed to reach worker for hero_scenes:`, err);
+            }
+          }
+        }
+      }
+
       // Non-LLM step (motion_graphics, stock_footage, etc.) — run directly via Vercel
       return NextResponse.json({
         success: true,

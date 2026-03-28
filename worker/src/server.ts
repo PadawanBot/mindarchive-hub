@@ -535,6 +535,171 @@ app.post("/generate-voiceover", async (req, res) => {
   })();
 });
 
+// ── Generate hero scenes via Runway text-to-video → R2 ──
+
+app.use("/generate-hero-scenes", authMiddleware);
+
+app.post("/generate-hero-scenes", async (req, res) => {
+  const { projectId, scenes, runwayKey, callbackUrl } = req.body as {
+    projectId: string;
+    scenes: { section: string; promptText: string }[];
+    runwayKey: string;
+    callbackUrl?: string;
+  };
+
+  if (!projectId || !scenes?.length || !runwayKey) {
+    return res.status(400).json({ error: "Missing projectId, scenes, or runwayKey" });
+  }
+
+  const jobId = uuid();
+  console.log(`[hero] Job ${jobId}: ${scenes.length} Runway scenes for project ${projectId}`);
+  res.json({ jobId, status: "queued" });
+
+  // Run async
+  (async () => {
+    try {
+      const RUNWAY_API = "https://api.dev.runwayml.com/v1";
+      const completed: { section: string; video_url: string; taskId: string }[] = [];
+
+      // Submit all scenes in parallel
+      const tasks = await Promise.all(
+        scenes.slice(0, 5).map(async (scene) => {
+          try {
+            const submitRes = await fetch(`${RUNWAY_API}/text_to_video`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${runwayKey}`,
+                "X-Runway-Version": "2024-11-06",
+              },
+              body: JSON.stringify({
+                model: "gen4_turbo",
+                promptText: scene.promptText.slice(0, 1000),
+                duration: 5,
+                ratio: "1280:720",
+              }),
+            });
+
+            if (!submitRes.ok) {
+              const err = await submitRes.text();
+              console.error(`[hero] Job ${jobId}: Runway submit failed for "${scene.section}": ${err.slice(0, 200)}`);
+              return null;
+            }
+
+            const { id: taskId } = await submitRes.json() as { id: string };
+            console.log(`[hero] Job ${jobId}: submitted "${scene.section}" → task ${taskId}`);
+            return { section: scene.section, taskId };
+          } catch (err) {
+            console.error(`[hero] Job ${jobId}: submit error for "${scene.section}":`, err);
+            return null;
+          }
+        })
+      );
+
+      const activeTasks = tasks.filter(Boolean) as { section: string; taskId: string }[];
+      console.log(`[hero] Job ${jobId}: ${activeTasks.length}/${scenes.length} tasks submitted, polling...`);
+
+      // Poll all tasks in parallel until done (max 5 min)
+      const MAX_POLL = 60; // 60 * 5s = 5 min
+      const pending = new Set(activeTasks.map(t => t.taskId));
+
+      for (let poll = 0; poll < MAX_POLL && pending.size > 0; poll++) {
+        await new Promise(r => setTimeout(r, 5000));
+
+        for (const task of activeTasks) {
+          if (!pending.has(task.taskId)) continue;
+
+          try {
+            const statusRes = await fetch(`${RUNWAY_API}/tasks/${task.taskId}`, {
+              headers: {
+                Authorization: `Bearer ${runwayKey}`,
+                "X-Runway-Version": "2024-11-06",
+              },
+            });
+
+            if (!statusRes.ok) continue;
+            const status = await statusRes.json() as { status: string; output?: string[]; failure?: string };
+
+            if (status.status === "SUCCEEDED" && status.output?.[0]) {
+              pending.delete(task.taskId);
+              const videoUrl = status.output[0];
+
+              // Download and upload to R2
+              try {
+                const vidRes = await fetch(videoUrl);
+                if (vidRes.ok) {
+                  const vidBuffer = Buffer.from(await vidRes.arrayBuffer());
+                  const tmpPath = path.join(os.tmpdir(), `runway-${jobId}-${task.taskId}.mp4`);
+                  await fs.writeFile(tmpPath, vidBuffer);
+
+                  const sceneIdx = activeTasks.indexOf(task) + 1;
+                  const r2Key = `runway/${projectId}/scene-${String(sceneIdx).padStart(3, "0")}.mp4`;
+                  const publicUrl = await uploadToR2(tmpPath, r2Key, "video/mp4");
+                  await fs.unlink(tmpPath).catch(() => {});
+
+                  completed.push({ section: task.section, video_url: publicUrl, taskId: task.taskId });
+                  console.log(`[hero] Job ${jobId}: "${task.section}" completed → ${publicUrl}`);
+                }
+              } catch (err) {
+                console.error(`[hero] Job ${jobId}: failed to download/upload "${task.section}":`, err);
+                completed.push({ section: task.section, video_url: videoUrl, taskId: task.taskId });
+              }
+            } else if (status.status === "FAILED") {
+              pending.delete(task.taskId);
+              console.error(`[hero] Job ${jobId}: "${task.section}" failed: ${status.failure}`);
+            }
+          } catch {}
+        }
+      }
+
+      if (pending.size > 0) {
+        console.warn(`[hero] Job ${jobId}: ${pending.size} tasks timed out after 5 min`);
+      }
+
+      console.log(`[hero] Job ${jobId}: completed — ${completed.length}/${activeTasks.length} scenes`);
+
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "hero_scenes",
+              status: "completed",
+              output: {
+                scenes: completed,
+                status: "completed",
+                tasks_started: activeTasks.length,
+                total_requested: scenes.length,
+              },
+              cost_cents: completed.length * 5, // ~$0.05 per Runway clip
+            }),
+          });
+        } catch (err) {
+          console.error(`[hero] Job ${jobId}: callback failed:`, err);
+        }
+      }
+    } catch (err) {
+      console.error(`[hero] Job ${jobId} failed:`, err);
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              step: "hero_scenes",
+              status: "failed",
+              error: String(err),
+            }),
+          });
+        } catch {}
+      }
+    }
+  })();
+});
+
 // ── Timing from audio — detect speech pauses and build scene timing ──
 
 app.post("/timing-from-audio", async (req, res) => {
