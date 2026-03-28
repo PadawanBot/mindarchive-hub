@@ -763,14 +763,16 @@ export default function ProjectDetailPage() {
         </Card>
       )}
 
-      {/* Completion Summary — show when all steps done OR project marked completed */}
-      {(project.status === "completed" || completedCount >= STEPS.length) && (
+      {/* Video Output — show whenever output_url exists OR production steps are done */}
+      {(project.output_url || preProdCompleted) && (
         <Card className="border-green-500/30">
-          <CardTitle className="flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-green-500" /> Production Complete
-          </CardTitle>
-          <CardContent className="mt-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {(project.status === "completed" || completedCount >= STEPS.length) && (
+            <>
+              <CardTitle className="flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-green-500" /> Production Complete
+              </CardTitle>
+              <CardContent className="mt-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-xs text-muted-foreground">Steps</p>
                 <p className="text-lg font-bold">{completedCount}/{STEPS.length}</p>
@@ -790,8 +792,12 @@ export default function ProjectDetailPage() {
                 </p>
               </div>
             </div>
+              </CardContent>
+            </>
+          )}
 
-            {/* Video Output Options */}
+          {/* Video Output Options — always visible when this card shows */}
+          <CardContent className={project.status === "completed" || completedCount >= STEPS.length ? "pt-0" : ""}>
             <div className="mt-4 pt-4 border-t border-muted space-y-3">
               <h4 className="text-sm font-semibold">Video Output</h4>
 
