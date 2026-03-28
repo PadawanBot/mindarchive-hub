@@ -346,8 +346,15 @@ const voiceover_generation: StepExecutor = async (ctx) => {
   if (!voiceId) return { output: { status: "skipped", reason: "No voice ID in channel profile" }, cost_cents: 0 };
 
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
-  // Strip visual cues and section headers for voiceover
-  const narration = script.replace(/\[VISUAL CUE:.*?\]/g, "").replace(/^#{1,3}\s.*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  // Strip visual tags and section headers for voiceover
+  const narration = script
+    .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE)[:\s][^\]]*\]/gi, "")
+    .replace(/^#{1,3}\s.*$/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
   // Trigger ElevenLabs generation via streaming — read just the first chunk
   // to confirm it started, then let ElevenLabs finish in the background.

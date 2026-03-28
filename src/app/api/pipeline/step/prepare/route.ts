@@ -140,7 +140,77 @@ export async function POST(request: Request) {
         }
       }
 
-      // Non-LLM step (voiceover, etc.) — run directly via Vercel
+      // Route voiceover_generation to EC2 worker (ElevenLabs streaming exceeds Vercel 60s timeout)
+      if (step === "voiceover_generation" && workerUrl) {
+        const elevenLabsKey = settings.elevenlabs_key;
+        const voiceId = profile?.voice_id;
+        if (!elevenLabsKey || !voiceId) {
+          return NextResponse.json({
+            success: true,
+            data: { needs_llm: false, step, project_id },
+          });
+        }
+
+        const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+        // Extract narration text from refined or raw script
+        const refinedStep = existingSteps.find(s => s.step === "script_refinement");
+        const scriptStep = existingSteps.find(s => s.step === "script_writing");
+        const scriptText = (refinedStep?.output as { refined_script?: string })?.refined_script
+          || (scriptStep?.output as { script?: string })?.script || "";
+
+        // Strip visual tags and section headers — narration only
+        const narration = scriptText
+          .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE)[:\s][^\]]*\]/gi, "")
+          .replace(/^#{1,3}\s.*$/gm, "")
+          .replace(/^---+$/gm, "")
+          .replace(/\*\*([^*]+)\*\*/g, "$1")   // strip bold markdown
+          .replace(/\*([^*]+)\*/g, "$1")        // strip italic markdown
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+
+        if (narration.length > 0) {
+          try {
+            const workerRes = await fetch(`${workerUrl}/generate-voiceover`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+              },
+              body: JSON.stringify({
+                projectId: project_id,
+                text: narration,
+                voiceId,
+                modelId: "eleven_multilingual_v2",
+                voiceSettings: {
+                  stability: 0.5,
+                  similarity_boost: 0.75,
+                  style: 0.5,
+                  use_speaker_boost: true,
+                },
+                elevenLabsKey: elevenLabsKey,
+                callbackUrl,
+              }),
+            });
+
+            if (workerRes.ok) {
+              const { jobId } = await workerRes.json();
+              console.log(`[prepare] voiceover_generation routed to worker — job ${jobId}, ${narration.length} chars`);
+              return NextResponse.json({
+                success: true,
+                data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+              });
+            } else {
+              const errText = await workerRes.text();
+              console.error(`[prepare] Worker /generate-voiceover failed: ${errText}`);
+            }
+          } catch (err) {
+            console.error(`[prepare] Failed to reach worker for voiceover_generation:`, err);
+          }
+        }
+      }
+
+      // Non-LLM step (motion_graphics, stock_footage, etc.) — run directly via Vercel
       return NextResponse.json({
         success: true,
         data: { needs_llm: false, step, project_id },
