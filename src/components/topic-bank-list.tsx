@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Pickaxe, Play, Archive, Trash2, RotateCcw } from "lucide-react";
+import { Loader2, Pickaxe, Play, Archive, Trash2, RotateCcw, X, Snowflake } from "lucide-react";
 import type { TopicBankItem, TopicStatus } from "@/types";
 
 const STATUS_FILTERS: { label: string; value: TopicStatus | "all" }[] = [
@@ -12,6 +12,9 @@ const STATUS_FILTERS: { label: string; value: TopicStatus | "all" }[] = [
   { label: "Available", value: "available" },
   { label: "In Production", value: "in_production" },
   { label: "Produced", value: "produced" },
+  { label: "Published", value: "published" },
+  { label: "Icebox", value: "icebox" },
+  { label: "Rejected", value: "rejected" },
   { label: "Archived", value: "archived" },
 ];
 
@@ -24,7 +27,8 @@ const interestVariant = (interest: string) => {
 const statusVariant = (status: string) => {
   if (status === "available") return "success" as const;
   if (status === "in_production") return "warning" as const;
-  if (status === "produced") return "default" as const;
+  if (status === "produced" || status === "published") return "default" as const;
+  if (status === "rejected") return "destructive" as const;
   return "outline" as const;
 };
 
@@ -178,9 +182,19 @@ export function TopicBankList({ profileId }: { profileId: string }) {
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={() => updateStatus(topic.id, "archived")}
+                        title="Save for later"
+                        onClick={() => updateStatus(topic.id, "icebox")}
                       >
-                        <Archive className="h-3 w-3" />
+                        <Snowflake className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        title="Reject"
+                        onClick={() => updateStatus(topic.id, "rejected")}
+                      >
+                        <X className="h-3 w-3" />
                       </Button>
                     </>
                   )}
@@ -194,7 +208,17 @@ export function TopicBankList({ profileId }: { profileId: string }) {
                       View Project
                     </Button>
                   )}
-                  {topic.status === "archived" && (
+                  {topic.status === "produced" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => updateStatus(topic.id, "published")}
+                    >
+                      Mark Published
+                    </Button>
+                  )}
+                  {(topic.status === "archived" || topic.status === "icebox" || topic.status === "rejected") && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -204,7 +228,7 @@ export function TopicBankList({ profileId }: { profileId: string }) {
                       <RotateCcw className="h-3 w-3 mr-1" /> Restore
                     </Button>
                   )}
-                  {(topic.status === "available" || topic.status === "archived") && (
+                  {(topic.status === "available" || topic.status === "archived" || topic.status === "icebox" || topic.status === "rejected") && (
                     <Button
                       variant="ghost"
                       size="sm"

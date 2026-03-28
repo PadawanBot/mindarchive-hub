@@ -146,7 +146,7 @@ export interface TopicSuggestion {
 }
 
 // ─── Topic Bank ───
-export type TopicStatus = "available" | "in_production" | "produced" | "archived";
+export type TopicStatus = "available" | "in_production" | "produced" | "published" | "rejected" | "icebox" | "archived";
 
 export interface TopicBankItem {
   id: string;
