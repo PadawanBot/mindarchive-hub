@@ -809,13 +809,13 @@ export default function ProjectDetailPage() {
                     <span className="text-sm font-medium">Landscape (16:9)</span>
                   </div>
                   <video src={project.output_url} controls className="w-full max-w-2xl rounded-lg border border-muted" />
-                  {project.output_portrait_url && (
+                  {((project.metadata as Record<string, unknown>)?.assembly_portrait_url as string) && (
                     <>
                       <div className="flex items-center gap-2 mt-3">
                         <CheckCircle className="h-4 w-4 text-green-500" />
                         <span className="text-sm font-medium">Portrait (9:16)</span>
                       </div>
-                      <video src={project.output_portrait_url} controls className="w-48 rounded-lg border border-muted" />
+                      <video src={(project.metadata as Record<string, unknown>).assembly_portrait_url as string} controls className="w-48 rounded-lg border border-muted" />
                     </>
                   )}
                 </div>

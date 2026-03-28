@@ -14,7 +14,6 @@ export async function POST(request: Request) {
     if (status === "completed" && outputUrl) {
       await update<Project>("projects", projectId, {
         output_url: outputUrl,
-        ...(portraitUrl ? { output_portrait_url: portraitUrl } : {}),
         metadata: {
           ...((project.metadata as Record<string, unknown>) || {}),
           assembly_status: "completed",
