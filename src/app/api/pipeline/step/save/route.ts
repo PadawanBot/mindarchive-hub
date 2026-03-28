@@ -3,6 +3,7 @@ import { getById, update, upsertStep, getStepsByProject, getAllSettings } from "
 import { getStepDef, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
 import { buildSaveData } from "@/lib/pipeline/prompts";
 import { executors } from "@/lib/pipeline/executors";
+import { onProjectComplete } from "@/lib/pipeline/on-project-complete";
 import { syncStepAssets } from "@/lib/asset-sync";
 import type { Project, PipelineStep } from "@/types";
 
@@ -56,6 +57,7 @@ export async function POST(request: Request) {
         status: "completed",
         total_cost_cents: totalCost,
       } as Partial<Project>);
+      await onProjectComplete(project_id);
     }
 
     const next = getNextStep(step as PipelineStep);

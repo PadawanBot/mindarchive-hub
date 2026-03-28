@@ -4,6 +4,7 @@ import { getStepDef, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
 import { buildSaveData } from "@/lib/pipeline/prompts";
 import { syncStepAssets } from "@/lib/asset-sync";
 import type { Project, PipelineStep } from "@/types";
+import { onProjectComplete } from "@/lib/pipeline/on-project-complete";
 
 export const maxDuration = 30;
 
@@ -98,6 +99,7 @@ export async function POST(request: Request) {
         status: "completed",
         total_cost_cents: totalCost,
       } as Partial<Project>);
+      await onProjectComplete(projectId);
     }
 
     console.log(`[llm-callback] Step ${step} for project ${projectId} saved — ${outputTokens} tokens, ${text.length} chars`);

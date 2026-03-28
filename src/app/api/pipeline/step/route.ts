@@ -5,6 +5,7 @@ import { getStepDef, canRunStep, getNextStep, PIPELINE_STEPS } from "@/lib/pipel
 import { deleteAssetsByStep } from "@/lib/asset-db";
 import { syncStepAssets } from "@/lib/asset-sync";
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult } from "@/types";
+import { onProjectComplete } from "@/lib/pipeline/on-project-complete";
 
 export const maxDuration = 60;
 
@@ -121,6 +122,7 @@ export async function POST(request: Request) {
           status: "completed",
           total_cost_cents: totalCost,
         } as Partial<Project>);
+        await onProjectComplete(project_id);
       }
 
       const next = getNextStep(step as PipelineStep);
