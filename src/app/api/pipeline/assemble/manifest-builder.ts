@@ -253,7 +253,7 @@ export function buildManifest(
     | undefined;
 
   const timingSync = getOutput("timing_sync") as
-    | { timing?: string }
+    | { timing?: string | Record<string, unknown>[] }
     | undefined;
 
   const motionGraphics = getOutput("motion_graphics") as
@@ -303,7 +303,12 @@ export function buildManifest(
   let timingDebug: { rawType: string; rawLength: number; rawSample: string; parsedLength: number } | null = null;
   if (timingSync?.timing) {
     const raw = timingSync.timing;
-    const parsed = safeParse<Record<string, unknown>[] | Record<string, unknown>>(raw);
+    // Handle both string (LLM output) and already-parsed array (worker /timing-from-audio output)
+    const parsed = Array.isArray(raw)
+      ? raw
+      : typeof raw === "object" && raw !== null
+        ? raw
+        : safeParse<Record<string, unknown>[] | Record<string, unknown>>(raw as string);
 
     // Handle case where the LLM wraps the array in an object
     let entries: Record<string, unknown>[] | null = null;
@@ -320,10 +325,11 @@ export function buildManifest(
       }
     }
 
+    const rawStr = typeof raw === "string" ? raw : JSON.stringify(raw);
     timingDebug = {
       rawType: typeof raw,
-      rawLength: raw.length,
-      rawSample: raw.slice(0, 300),
+      rawLength: rawStr.length,
+      rawSample: rawStr.slice(0, 300),
       parsedLength: entries?.length || 0,
     };
 
