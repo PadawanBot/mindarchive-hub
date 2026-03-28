@@ -649,14 +649,32 @@ const hero_scenes: StepExecutor = async (ctx) => {
   const key = ctx.settings.runway_key;
   if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
 
-  // Get visual direction prompts for cinematic scene descriptions
+  // Get RUNWAY prompts from visual direction
   const visualOutput = getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string } | undefined;
   let scenePrompts: { section: string; dalle_prompt: string }[] = [];
   if (visualOutput?.visuals) {
+    let cleaned = visualOutput.visuals.trim();
+    if (cleaned.startsWith("```")) {
+      cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+    }
     try {
-      const parsed = JSON.parse(visualOutput.visuals);
-      const scenes = Array.isArray(parsed) ? parsed : parsed.scenes || [];
-      scenePrompts = scenes.filter((s: { dalle_prompt?: string }) => s.dalle_prompt);
+      let parsed = JSON.parse(cleaned);
+      if (!Array.isArray(parsed) && typeof parsed === "object") {
+        for (const k of ["scenes", "data", "entries"]) {
+          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+        }
+      }
+      const scenes = Array.isArray(parsed) ? parsed : [];
+      // Extract RUNWAY-tagged scenes (new format) or fallback to dalle_prompt
+      scenePrompts = scenes
+        .filter((s: Record<string, unknown>) =>
+          (s.tag_type === "RUNWAY" && typeof s.prompt === "string") ||
+          typeof s.dalle_prompt === "string"
+        )
+        .map((s: Record<string, unknown>) => ({
+          section: String(s.scene || s.section || "Hero Scene"),
+          dalle_prompt: String(s.tag_type === "RUNWAY" ? s.prompt : s.dalle_prompt),
+        }));
     } catch {}
   }
 
@@ -687,8 +705,8 @@ const hero_scenes: StepExecutor = async (ctx) => {
     }
   }
 
-  // Generate up to 2 hero scenes via text-to-video (no image needed)
-  const toProcess = scenePrompts.slice(0, 2);
+  // Generate up to 5 hero scenes via text-to-video (pipeline rule: max 3-5 RUNWAY per video)
+  const toProcess = scenePrompts.slice(0, 5);
   const scenes: { promptText: string; section: string; taskId: string }[] = [];
 
   for (const scene of toProcess) {
