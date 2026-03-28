@@ -1,9 +1,17 @@
-import sharp from "sharp";
-
 /**
- * Safe margins — 7% from each edge for landscape + portrait safety.
- * Text placed within these margins is visible on all devices/crops.
+ * Motion graphic card renderer — ffmpeg drawtext (no sharp dependency).
+ *
+ * Renders text cards (title cards, data overlays, end cards) as PNG stills.
+ * Uses ffmpeg lavfi color source + drawtext filters.
+ * 7% safe margins from each edge for landscape + portrait safety.
  */
+
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const exec = promisify(execFile);
+const FFMPEG = "ffmpeg";
+
 const MARGIN_X_PERCENT = 0.07;
 const MARGIN_Y_PERCENT = 0.07;
 
@@ -16,121 +24,116 @@ export interface MotionGraphicSpec {
   textColor?: string;
   accentColor?: string;
   fontSize?: number;
-}
-
-interface RenderOptions {
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
 }
 
 /**
- * Render a motion graphic card as a PNG buffer.
- * Uses safe margins (7% from each edge) to ensure text is visible
- * in both landscape (16:9) and portrait (9:16) crops.
+ * Escape text for ffmpeg drawtext filter.
+ * Must escape : ' \ and newlines.
+ */
+function escapeDrawtext(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\\\\\")
+    .replace(/'/g, "'\\\\\\''")
+    .replace(/:/g, "\\\\:")
+    .replace(/%/g, "%%")
+    .replace(/\n/g, "\\n");
+}
+
+/**
+ * Render a motion graphic card as a PNG file.
+ * Uses ffmpeg lavfi color source + drawtext filters.
+ *
+ * @param spec  Card content and styling
+ * @param outputPath  Path to write the PNG
  */
 export async function renderMotionGraphic(
   spec: MotionGraphicSpec,
-  options: RenderOptions = { width: 1920, height: 1080 }
-): Promise<Buffer> {
-  const { width, height } = options;
+  outputPath: string
+): Promise<void> {
+  const width = spec.width || 1920;
+  const height = spec.height || 1080;
   const marginX = Math.round(width * MARGIN_X_PERCENT);
   const marginY = Math.round(height * MARGIN_Y_PERCENT);
-  const contentWidth = width - marginX * 2;
 
-  const bgColor = spec.backgroundColor || "#1a1a2e";
-  const textColor = spec.textColor || "#ffffff";
-  const accentColor = spec.accentColor || "#e94560";
+  const bgColor = (spec.backgroundColor || "#1a1a2e").replace("#", "0x");
+  const textColor = (spec.textColor || "#ffffff").replace("#", "0x");
+  const accentColor = (spec.accentColor || "#e94560").replace("#", "0x");
   const baseFontSize = spec.fontSize || 48;
 
-  // Build SVG text card
-  const lines: string[] = [];
-  let y = marginY + baseFontSize;
+  // Build drawtext filter chain
+  const filters: string[] = [];
+  let y = marginY;
 
   // Title
   if (spec.title) {
-    lines.push(
-      `<text x="${marginX}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${baseFontSize * 1.4}" font-weight="bold" fill="${accentColor}">${escapeXml(spec.title)}</text>`
+    const titleSize = Math.round(baseFontSize * 1.4);
+    filters.push(
+      `drawtext=text='${escapeDrawtext(spec.title)}'` +
+      `:x=${marginX}:y=${y}` +
+      `:fontsize=${titleSize}:fontcolor=${accentColor}` +
+      `:font=Arial`
     );
-    y += baseFontSize * 1.8;
+    y += Math.round(titleSize * 1.6);
   }
 
-  // Divider line after title
-  if (spec.title && (spec.body || spec.bullets?.length)) {
-    lines.push(
-      `<line x1="${marginX}" y1="${y - baseFontSize * 0.4}" x2="${marginX + contentWidth * 0.3}" y2="${y - baseFontSize * 0.4}" stroke="${accentColor}" stroke-width="3" />`
-    );
-    y += baseFontSize * 0.5;
-  }
-
-  // Body text — wrap lines
+  // Body text
   if (spec.body) {
-    const wrapped = wrapText(spec.body, Math.floor(contentWidth / (baseFontSize * 0.5)));
-    for (const line of wrapped) {
-      lines.push(
-        `<text x="${marginX}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${baseFontSize}" fill="${textColor}">${escapeXml(line)}</text>`
-      );
-      y += baseFontSize * 1.4;
-    }
-    y += baseFontSize * 0.3;
+    filters.push(
+      `drawtext=text='${escapeDrawtext(spec.body)}'` +
+      `:x=${marginX}:y=${y}` +
+      `:fontsize=${baseFontSize}:fontcolor=${textColor}` +
+      `:font=Arial`
+    );
+    y += Math.round(baseFontSize * 1.5 * Math.ceil(spec.body.length / 60));
   }
 
   // Bullet points
   if (spec.bullets?.length) {
     for (const bullet of spec.bullets) {
-      const bulletX = marginX + baseFontSize * 0.5;
-      // Bullet dot
-      lines.push(
-        `<circle cx="${marginX + baseFontSize * 0.2}" cy="${y - baseFontSize * 0.3}" r="${baseFontSize * 0.15}" fill="${accentColor}" />`
+      const bulletText = `\u2022  ${bullet}`;
+      filters.push(
+        `drawtext=text='${escapeDrawtext(bulletText)}'` +
+        `:x=${marginX + Math.round(baseFontSize * 0.5)}:y=${y}` +
+        `:fontsize=${Math.round(baseFontSize * 0.9)}:fontcolor=${textColor}` +
+        `:font=Arial`
       );
-      const wrapped = wrapText(bullet, Math.floor((contentWidth - baseFontSize) / (baseFontSize * 0.5)));
-      for (const line of wrapped) {
-        lines.push(
-          `<text x="${bulletX}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${baseFontSize * 0.9}" fill="${textColor}">${escapeXml(line)}</text>`
-        );
-        y += baseFontSize * 1.3;
-      }
-      y += baseFontSize * 0.2;
+      y += Math.round(baseFontSize * 1.4);
     }
   }
 
-  // Footer
+  // Footer (anchored to bottom)
   if (spec.footer) {
-    const footerY = height - marginY;
-    lines.push(
-      `<text x="${marginX}" y="${footerY}" font-family="Arial, Helvetica, sans-serif" font-size="${baseFontSize * 0.7}" fill="${textColor}" opacity="0.7">${escapeXml(spec.footer)}</text>`
+    const footerY = height - marginY - Math.round(baseFontSize * 0.7);
+    filters.push(
+      `drawtext=text='${escapeDrawtext(spec.footer)}'` +
+      `:x=${marginX}:y=${footerY}` +
+      `:fontsize=${Math.round(baseFontSize * 0.7)}:fontcolor=${textColor}@0.7` +
+      `:font=Arial`
     );
   }
 
-  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${width}" height="${height}" fill="${bgColor}" />
-    ${lines.join("\n    ")}
-  </svg>`;
+  // If no text at all, just produce a solid color frame
+  const vf = filters.length > 0 ? `,${filters.join(",")}` : "";
 
-  return sharp(Buffer.from(svg)).png().toBuffer();
-}
+  const args = [
+    "-y",
+    "-f", "lavfi",
+    "-i", `color=c=${bgColor}:s=${width}x${height}:d=1`,
+    "-vf", `format=rgb24${vf}`,
+    "-frames:v", "1",
+    outputPath,
+  ];
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    if (current.length + word.length + 1 > maxCharsPerLine) {
-      if (current) lines.push(current);
-      current = word;
-    } else {
-      current = current ? `${current} ${word}` : word;
-    }
+  try {
+    await exec(FFMPEG, args, { maxBuffer: 10 * 1024 * 1024 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stderr =
+      typeof err === "object" && err !== null && "stderr" in err
+        ? (err as { stderr: string }).stderr?.slice(-500)
+        : "";
+    throw new Error(`[motion-graphic] ffmpeg failed: ${msg}\n${stderr}`);
   }
-  if (current) lines.push(current);
-  return lines;
 }

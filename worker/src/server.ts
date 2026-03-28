@@ -2,8 +2,12 @@ import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { assembleVideo, assembleVideoV2 } from "./assembler";
 import { timingFromAudioUrl } from "./timing-from-audio";
-import { renderMotionGraphic, type MotionGraphicSpec } from "./motion-graphic-renderer";
+import { renderMotionGraphic } from "./motion-graphic-renderer";
+import { uploadToR2 } from "./r2-upload";
 import { v4 as uuid } from "uuid";
+import * as path from "path";
+import * as os from "os";
+import * as fs from "fs/promises";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -340,28 +344,23 @@ app.post("/timing-from-audio", async (req, res) => {
   }
 });
 
-// ── Render a motion graphic card as PNG ──
+// ── Render a motion graphic card as PNG → R2 ──
 
 app.post("/render-motion-graphic", async (req, res) => {
+  const { spec, projectId, sceneIndex } = req.body;
+  if (!spec) return res.status(400).json({ error: "Missing spec" });
+
+  const jobId = uuid();
+  const outputPath = path.join(os.tmpdir(), `mg-${jobId}.png`);
+
   try {
-    const { spec, width, height } = req.body as {
-      spec: MotionGraphicSpec;
-      width?: number;
-      height?: number;
-    };
-
-    if (!spec) {
-      return res.status(400).json({ error: "Missing spec" });
-    }
-
-    const png = await renderMotionGraphic(spec, {
-      width: width || 1920,
-      height: height || 1080,
-    });
-
-    res.setHeader("Content-Type", "image/png");
-    res.send(png);
+    await renderMotionGraphic(spec, outputPath);
+    const r2Key = `graphics/${projectId || "shared"}/scene-${String(sceneIndex || jobId).padStart(3, "0")}.png`;
+    const publicUrl = await uploadToR2(outputPath, r2Key, "image/png");
+    await fs.unlink(outputPath).catch(() => {});
+    res.json({ success: true, url: publicUrl });
   } catch (err) {
+    await fs.unlink(outputPath).catch(() => {});
     res.status(500).json({ error: String(err) });
   }
 });
