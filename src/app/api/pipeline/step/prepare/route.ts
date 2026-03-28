@@ -72,6 +72,67 @@ export async function POST(request: Request) {
 
     const workerUrl = process.env.WORKER_URL;
 
+    // Route timing_sync to EC2 worker's audio-driven timing endpoint BEFORE prompt building
+    // Gold standard: ffmpeg silencedetect on actual voiceover MP3, not LLM word-count estimation
+    if (step === "timing_sync" && workerUrl) {
+      const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+      // Get voiceover URL from previous step
+      const voiceoverStep = existingSteps.find(s => s.step === "voiceover_generation" && s.status === "completed");
+      const voiceoverOutput = voiceoverStep?.output as { audio_url?: string } | undefined;
+      const voiceoverUrl = voiceoverOutput?.audio_url;
+
+      // Get visual direction scenes array
+      const visualStep = existingSteps.find(s => s.step === "visual_direction" && s.status === "completed");
+      const visualOutput = (visualStep?.output as { visuals?: string })?.visuals || "";
+      let scenes: Record<string, unknown>[] = [];
+      try {
+        let cleaned = visualOutput.trim();
+        if (cleaned.startsWith("```")) {
+          cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+        }
+        const parsed = JSON.parse(cleaned);
+        scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || parsed.data || []);
+      } catch {
+        console.error("[prepare] Failed to parse visual direction scenes for timing_sync");
+      }
+
+      if (voiceoverUrl && scenes.length > 0) {
+        try {
+          const workerRes = await fetch(`${workerUrl}/timing-from-audio`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+            },
+            body: JSON.stringify({
+              projectId: project_id,
+              voiceoverUrl,
+              scenes,
+              callbackUrl,
+            }),
+          });
+
+          if (workerRes.ok) {
+            const { jobId } = await workerRes.json();
+            console.log(`[prepare] timing_sync routed to worker /timing-from-audio — job ${jobId}, ${scenes.length} scenes, audio: ${voiceoverUrl}`);
+            return NextResponse.json({
+              success: true,
+              data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+            });
+          } else {
+            const errText = await workerRes.text();
+            console.error(`[prepare] Worker /timing-from-audio failed: ${errText}`);
+            // Fall through to LLM-based timing as fallback
+          }
+        } catch (err) {
+          console.error(`[prepare] Failed to reach worker for timing-from-audio:`, err);
+        }
+      } else {
+        console.warn(`[prepare] timing_sync: missing voiceover (${!!voiceoverUrl}) or scenes (${scenes.length}) — falling back to LLM`);
+      }
+    }
+
     // Build prompt for this step
     const prompt = buildPrompt(step as PipelineStep, { project, profile, format, previousSteps: existingSteps, settings });
 
@@ -207,66 +268,6 @@ export async function POST(request: Request) {
           } catch (err) {
             console.error(`[prepare] Failed to reach worker for voiceover_generation:`, err);
           }
-        }
-      }
-
-      // Route timing_sync to EC2 worker's audio-driven timing endpoint (gold standard: ffmpeg silencedetect)
-      if (step === "timing_sync" && workerUrl) {
-        const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
-
-        // Get voiceover URL from previous step
-        const voiceoverStep = existingSteps.find(s => s.step === "voiceover_generation" && s.status === "completed");
-        const voiceoverOutput = voiceoverStep?.output as { audio_url?: string } | undefined;
-        const voiceoverUrl = voiceoverOutput?.audio_url;
-
-        // Get visual direction scenes array
-        const visualStep = existingSteps.find(s => s.step === "visual_direction" && s.status === "completed");
-        const visualOutput = (visualStep?.output as { visuals?: string })?.visuals || "";
-        let scenes: Record<string, unknown>[] = [];
-        try {
-          let cleaned = visualOutput.trim();
-          if (cleaned.startsWith("```")) {
-            cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-          }
-          const parsed = JSON.parse(cleaned);
-          scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || parsed.data || []);
-        } catch {
-          console.error("[prepare] Failed to parse visual direction scenes for timing_sync");
-        }
-
-        if (voiceoverUrl && scenes.length > 0) {
-          try {
-            const workerRes = await fetch(`${workerUrl}/timing-from-audio`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
-              },
-              body: JSON.stringify({
-                projectId: project_id,
-                voiceoverUrl,
-                scenes,
-                callbackUrl,
-              }),
-            });
-
-            if (workerRes.ok) {
-              const { jobId } = await workerRes.json();
-              console.log(`[prepare] timing_sync routed to worker /timing-from-audio — job ${jobId}, ${scenes.length} scenes, audio: ${voiceoverUrl}`);
-              return NextResponse.json({
-                success: true,
-                data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
-              });
-            } else {
-              const errText = await workerRes.text();
-              console.error(`[prepare] Worker /timing-from-audio failed: ${errText}`);
-              // Fall through to LLM-based timing as fallback
-            }
-          } catch (err) {
-            console.error(`[prepare] Failed to reach worker for timing-from-audio:`, err);
-          }
-        } else {
-          console.warn(`[prepare] timing_sync: missing voiceover (${!!voiceoverUrl}) or scenes (${scenes.length}) — falling back to LLM`);
         }
       }
 
