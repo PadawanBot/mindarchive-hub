@@ -42,14 +42,8 @@ export async function POST(request: Request) {
     const { manifest, scenes } = result as import("./manifest-builder").ManifestBuildResult;
 
     // ── Send to worker ──
-    // Build callback URL — origin header is unreliable on Vercel serverless,
-    // so fall back to VERCEL_URL env var or the host header
-    const origin =
-      request.headers.get("origin") ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-      (request.headers.get("host") ? `https://${request.headers.get("host")}` : null) ||
-      "";
-    const callbackUrl = `${origin}/api/pipeline/assemble/callback`;
+    // Always use production URL — preview URLs have Vercel deployment protection (401)
+    const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/assemble/callback";
     const workerRes = await fetch(`${workerUrl}/assemble`, {
       method: "POST",
       headers: {
