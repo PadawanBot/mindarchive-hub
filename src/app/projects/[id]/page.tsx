@@ -763,8 +763,8 @@ export default function ProjectDetailPage() {
         </Card>
       )}
 
-      {/* Completion Summary */}
-      {project.status === "completed" && (
+      {/* Completion Summary — show when all steps done OR project marked completed */}
+      {(project.status === "completed" || completedCount >= STEPS.length) && (
         <Card className="border-green-500/30">
           <CardTitle className="flex items-center gap-2">
             <CheckCircle className="h-5 w-5 text-green-500" /> Production Complete
