@@ -129,7 +129,7 @@ Output as a JSON array. Each entry has:
 - ken_burns (for DALLE), motion_type (for RUNWAY), layout_type + colour_scheme (for MOTION_GRAPHIC)
 
 Complete ALL scenes in the script. Do not stop early.`,
-        user: `Create visual direction for this script:\n\n${script.slice(0, 6000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
+        user: `Create visual direction for this script:\n\n${script.slice(0, 25000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}\n\nIMPORTANT: Cover EVERY scene in the script. Do NOT stop early. The script has multiple sections — produce visual direction for ALL of them.`,
         maxTokens: 16384,
       };
     }

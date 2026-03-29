@@ -228,9 +228,11 @@ Then assign ONE tag_type per scene and provide the matching production spec:
 Use DALLE as the default. RUNWAY only for emotional peaks. STOCK for real-world B-roll. MOTION_GRAPHIC for text/data cards.
 
 Output as a JSON array:
-[{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]`,
-    `Create visual direction for this script:\n\n${script.slice(0, 4000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}`,
-    4096
+[{"scene": 1, "narration": "first line...", "visual_direction": "description...", "tag_type": "DALLE", "prompt": "cinematic prompt...", "ken_burns": "slow zoom-in 1.05", "duration": 8, "transition_in": "fade", "transition_out": "crossfade 0.8s"}, ...]
+
+Complete ALL scenes in the script. Do not stop early.`,
+    `Create visual direction for this script:\n\n${script.slice(0, 25000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}\n\nIMPORTANT: Cover EVERY scene in the script. Do NOT stop early.`,
+    16384
   );
   return {
     output: { visuals: result.text },
