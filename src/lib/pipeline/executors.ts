@@ -510,57 +510,85 @@ const image_generation: StepExecutor = async (ctx) => {
 
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
 
-  // Extract DALL-E prompts from visual direction JSON
-  // Handles: {tag_type: "DALLE", prompt: "..."} or {dalle_prompt: "..."}
+  // Extract DALL-E prompts from visual direction output.
+  // New format: doc + "=== VISUAL DIRECTION JSON ===" + JSON array with {tag, dalle_prompt, ...}
+  // Legacy format: raw JSON array with {tag_type, prompt} or {dalle_prompt}
   let prompts: string[] = [];
-  let cleaned = visuals.trim();
+
+  const JSON_SEPARATOR = "=== VISUAL DIRECTION JSON ===";
+  const sepIdx = visuals.indexOf(JSON_SEPARATOR);
+  // Prefer the explicit JSON section; fall back to treating the whole string as JSON
+  let jsonSource = sepIdx !== -1
+    ? visuals.slice(sepIdx + JSON_SEPARATOR.length).trim()
+    : visuals.trim();
   // Strip markdown code fences
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  if (jsonSource.startsWith("```")) {
+    jsonSource = jsonSource.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
   }
   try {
-    let parsed = JSON.parse(cleaned);
+    let parsed = JSON.parse(jsonSource);
     // Handle wrapped objects
     if (!Array.isArray(parsed) && typeof parsed === "object") {
-      for (const key of ["scenes", "data", "entries"]) {
-        if (Array.isArray(parsed[key])) { parsed = parsed[key]; break; }
+      for (const k of ["scenes", "data", "entries"]) {
+        if (Array.isArray((parsed as Record<string, unknown>)[k])) { parsed = (parsed as Record<string, unknown>)[k]; break; }
       }
     }
     if (Array.isArray(parsed)) {
       prompts = parsed
         .filter((s: Record<string, unknown>) =>
-          // New format: tag_type + prompt
+          // Gold standard format: tag + dalle_prompt
+          (s.tag === "DALLE" && typeof s.dalle_prompt === "string") ||
+          // Legacy format: tag_type + prompt
           (s.tag_type === "DALLE" && typeof s.prompt === "string") ||
-          // Legacy format: dalle_prompt
+          // Legacy format: bare dalle_prompt
           typeof s.dalle_prompt === "string"
         )
         .map((s: Record<string, unknown>) =>
-          (s.tag_type === "DALLE" ? s.prompt : s.dalle_prompt) as string
+          (s.tag === "DALLE" || s.tag_type === "DALLE"
+            ? (s.dalle_prompt ?? s.prompt)
+            : s.dalle_prompt) as string
         );
     }
   } catch {
-    // Fallback: extract prompts with regex from raw text
-    const matches = visuals.match(/(?:dalle_prompt|"prompt")["\s:]+["']([^"']+)/gi);
-    if (matches) prompts = matches.map(m => m.replace(/(?:dalle_prompt|"prompt")["\s:]+["']/i, "")).slice(0, 15);
+    // Fallback: extract dalle_prompt values with regex from raw text
+    const matches = visuals.match(/"dalle_prompt"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
+    if (matches) prompts = matches.map(m => m.replace(/^"dalle_prompt"\s*:\s*"/, "").replace(/"$/, "")).slice(0, 15);
   }
 
   if (prompts.length === 0) {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Generate up to 15 images in parallel batches
-  // DALL-E 3 takes ~15-20s each. Batch size 5 = 2 batches for 10 images ≈ 40s
-  const maxImages = Math.min(prompts.length, 15);
-  const batchSize = 5;
-  const images: { prompt: string; url: string; revised_prompt: string; stored: boolean }[] = [];
+  // Resume support: carry forward any images already generated in a prior run
+  type ImageEntry = { prompt: string; url: string; revised_prompt: string; stored: boolean };
+  const prevImages: ImageEntry[] =
+    (getPrevOutput(ctx.previousSteps, "image_generation") as { images?: ImageEntry[] })?.images || [];
+  const alreadyGenerated = new Set(prevImages.map(img => img.prompt.trim()));
+  const missingPrompts = prompts.filter(p => !alreadyGenerated.has(p.trim()));
 
-  // Phase 1: Generate all DALL-E images (parallel batches, ~20s per batch)
+  if (missingPrompts.length === 0) {
+    // All images already exist — nothing to do
+    return {
+      output: { status: "completed", images: prevImages, total_prompts: prompts.length, generated: prevImages.length },
+      cost_cents: 0,
+    };
+  }
+
+  console.log(`[image_generation] ${prevImages.length} existing, ${missingPrompts.length} to generate`);
+
+  // Generate missing images in parallel batches of 5
+  // DALL-E 3 takes ~15-20s each. Batch size 5 ≈ 20s per batch
+  const maxImages = Math.min(missingPrompts.length, 15);
+  const batchSize = 5;
+  const images: ImageEntry[] = [...prevImages]; // start with existing
+
+  // Phase 1: Generate missing DALL-E images (parallel batches)
   const tempImages: { prompt: string; url: string; revised_prompt: string; index: number }[] = [];
   for (let batch = 0; batch < maxImages; batch += batchSize) {
-    const batchPrompts = prompts.slice(batch, batch + batchSize);
+    const batchPrompts = missingPrompts.slice(batch, batch + batchSize);
     const batchResults = await Promise.all(
       batchPrompts.map(async (p, batchIdx) => {
-        const i = batch + batchIdx;
+        const i = prevImages.length + batch + batchIdx; // global scene index for filename
         try {
           const img = await generateImage(key, sanitizePrompt(p));
           return { prompt: p, url: img.url, revised_prompt: img.revisedPrompt, index: i };
@@ -573,7 +601,7 @@ const image_generation: StepExecutor = async (ctx) => {
     tempImages.push(...batchResults.filter(Boolean) as typeof tempImages);
   }
 
-  // Phase 2: Persist to storage (all in parallel — don't wait sequentially)
+  // Phase 2: Persist to storage (all in parallel)
   const storeResults = await Promise.all(
     tempImages.map(async (img) => {
       try {
