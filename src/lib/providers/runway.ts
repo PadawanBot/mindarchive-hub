@@ -14,19 +14,22 @@ export async function generateVideo(
   apiKey: string,
   promptText: string,
   options?: {
-    model?: "veo3" | "veo3.1" | "veo3.1_fast" | "gen4.5";
+    model?: "gen4.5" | "veo3" | "veo3.1" | "veo3.1_fast";
     duration?: number;
-    ratio?: "1280:720" | "720:1280" | "1080:1920" | "1920:1080";
+    ratio?: "1280:720" | "720:1280";
   }
 ): Promise<{ taskId: string }> {
   const client = new RunwayML({ apiKey });
-  const model = options?.model || "veo3";
+  // Default to gen4.5 — available on all paid Runway accounts.
+  // veo3/veo3.1 require Google partnership access and will silently fail otherwise.
+  const model = options?.model || "gen4.5";
   const ratio = options?.ratio || "1280:720";
+  const duration = options?.duration || 8;
 
   const task = await client.textToVideo.create({
     model,
     promptText: promptText.slice(0, 1000),
-    duration: model === "veo3" ? 8 : (options?.duration || 8),
+    duration,
     ratio,
   } as Parameters<typeof client.textToVideo.create>[0]);
 

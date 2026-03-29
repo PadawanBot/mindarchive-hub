@@ -20,6 +20,9 @@ import {
   Upload,
   Plus,
   X,
+  Copy,
+  Check,
+  Clapperboard,
 } from "lucide-react";
 
 interface AssetRow {
@@ -360,6 +363,158 @@ function InlineUploadButton({ projectId, step, onSuccess }: InlineUploadProps) {
   );
 }
 
+// ─── Hero Scenes Panel ───────────────────────────────────────────────────────
+
+interface HeroScene {
+  section: string;
+  promptText?: string;
+  taskId?: string;
+  video_url?: string;
+}
+
+interface HeroScenesPanelProps {
+  projectId: string;
+  onAssetsChanged: () => void;
+}
+
+function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
+  const [scenes, setScenes] = useState<HeroScene[]>([]);
+  const [uploading, setUploading] = useState<Record<number, boolean>>({});
+  const [copied, setCopied] = useState<Record<number, boolean>>({});
+  const fileRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    fetch(`/api/pipeline/steps?project_id=${projectId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return;
+        const heroStep = (d.data as { step: string; output?: Record<string, unknown> }[])
+          .find(s => s.step === "hero_scenes");
+        const raw = heroStep?.output as { scenes?: HeroScene[] } | undefined;
+        if (raw?.scenes?.length) setScenes(raw.scenes);
+      })
+      .catch(() => {});
+  }, [projectId]);
+
+  const copyPrompt = (index: number, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(prev => ({ ...prev, [index]: true }));
+      setTimeout(() => setCopied(prev => ({ ...prev, [index]: false })), 2000);
+    });
+  };
+
+  const handleUpload = async (index: number, file: File) => {
+    setUploading(prev => ({ ...prev, [index]: true }));
+    try {
+      // 1. Upload to asset library
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("project_id", projectId);
+      formData.append("asset_type", "runway_video");
+      formData.append("slot_name", `scenes[${index}].video_url`);
+      const uploadRes = await fetch("/api/assets/manual-upload", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadData.success) throw new Error(uploadData.error || "Upload failed");
+
+      const videoUrl: string = uploadData.data?.url || uploadData.data?.asset?.url;
+      if (!videoUrl) throw new Error("No URL returned");
+
+      // 2. Wire into hero_scenes step output
+      const updatedScenes = scenes.map((s, i) =>
+        i === index ? { ...s, video_url: videoUrl } : s
+      );
+      await fetch("/api/pipeline/step/update-output", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          step: "hero_scenes",
+          output_update: { scenes: updatedScenes },
+        }),
+      });
+
+      setScenes(updatedScenes);
+      onAssetsChanged();
+    } catch (err) {
+      alert(`Upload failed: ${String(err)}`);
+    }
+    setUploading(prev => ({ ...prev, [index]: false }));
+    if (fileRefs.current[index]) fileRefs.current[index]!.value = "";
+  };
+
+  if (scenes.length === 0) return null;
+
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2 text-base">
+        <Clapperboard className="w-4 h-4 text-purple-400" />
+        Hero Scene Slots
+        <Badge variant="outline" className="text-xs">{scenes.length} scenes</Badge>
+        <span className="text-xs text-muted-foreground font-normal ml-1">— upload externally generated clips (Grok, Sora, etc.)</span>
+      </CardTitle>
+      <CardContent className="mt-3 space-y-3">
+        {scenes.map((scene, i) => (
+          <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-muted-foreground/10 bg-muted/20">
+            {/* Scene number */}
+            <div className="shrink-0 w-7 h-7 rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs font-bold">
+              {i + 1}
+            </div>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <p className="text-xs font-semibold">{scene.section}</p>
+              {scene.promptText && (
+                <div className="flex items-start gap-1.5">
+                  <p className="text-xs text-muted-foreground leading-relaxed flex-1">{scene.promptText}</p>
+                  <button
+                    onClick={() => copyPrompt(i, scene.promptText!)}
+                    className="shrink-0 p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                    title="Copy prompt for Grok / Sora"
+                  >
+                    {copied[i] ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Status + upload */}
+            <div className="shrink-0 flex flex-col items-end gap-1.5">
+              {scene.video_url ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-green-500 font-medium">✓ Video ready</span>
+                  <a href={scene.video_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-foreground">
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              ) : scene.taskId && !scene.taskId.startsWith("error:") ? (
+                <span className="text-xs text-yellow-500">Runway pending</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">No video</span>
+              )}
+              <button
+                onClick={() => fileRefs.current[i]?.click()}
+                disabled={uploading[i]}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-dashed border-purple-500/40 text-purple-300 hover:bg-purple-500/10 transition-colors disabled:opacity-50"
+              >
+                {uploading[i] ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                {uploading[i] ? "Uploading..." : scene.video_url ? "Replace" : "Upload clip"}
+              </button>
+              <input
+                ref={el => { fileRefs.current[i] = el; }}
+                type="file"
+                accept="video/*"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(i, f); }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function AssetLibraryPage() {
@@ -492,6 +647,9 @@ export default function AssetLibraryPage() {
           </button>
         ))}
       </div>
+
+      {/* Hero Scenes — prompt reference + per-slot upload */}
+      <HeroScenesPanel projectId={projectId} onAssetsChanged={loadData} />
 
       {/* Asset table grouped by step */}
       {Object.entries(grouped)

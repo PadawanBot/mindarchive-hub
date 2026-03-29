@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function HeroScenesViewer({ scenes, skipped, reason, projectId }: {
@@ -14,6 +14,14 @@ export function HeroScenesViewer({ scenes, skipped, reason, projectId }: {
   const [polling, setPolling] = useState(false);
   const [autoPolling, setAutoPolling] = useState(false);
   const [persisting, setPersisting] = useState<Record<number, boolean>>({});
+  const [copied, setCopied] = useState<Record<number, boolean>>({});
+
+  const copyPrompt = useCallback((index: number, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(prev => ({ ...prev, [index]: true }));
+      setTimeout(() => setCopied(prev => ({ ...prev, [index]: false })), 2000);
+    });
+  }, []);
 
   // Persist a succeeded Runway video: download to Supabase Storage, then update step output
   const persistVideo = useCallback(async (index: number, sourceUrl: string) => {
@@ -148,7 +156,18 @@ export function HeroScenesViewer({ scenes, skipped, reason, projectId }: {
                     ? `Error: ${taskId.replace("error: ", "")}`
                     : "No Runway task started"}
               </p>
-              {prompt && <p className="text-xs text-muted-foreground/70 line-clamp-1">{prompt}</p>}
+              {prompt && (
+                <div className="flex items-start gap-1 mt-0.5">
+                  <p className="text-xs text-muted-foreground/70 line-clamp-2 flex-1">{prompt}</p>
+                  <button
+                    onClick={() => copyPrompt(i, prompt)}
+                    className="shrink-0 p-0.5 rounded hover:bg-muted transition-colors text-muted-foreground/50 hover:text-muted-foreground"
+                    title="Copy prompt"
+                  >
+                    {copied[i] ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              )}
               {persisting[i] && <p className="text-xs text-blue-400">Saving video to storage...</p>}
             </div>
             {videoUrl ? (

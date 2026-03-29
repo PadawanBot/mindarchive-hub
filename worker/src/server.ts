@@ -558,7 +558,7 @@ app.post("/generate-hero-scenes", async (req, res) => {
   // Run async
   (async () => {
     try {
-      const RUNWAY_API = "https://api.dev.runwayml.com/v1";
+      const RUNWAY_API = "https://api.runwayml.com/v1";
       const completed: { section: string; video_url: string; taskId: string }[] = [];
 
       // Submit all scenes in parallel
@@ -573,7 +573,7 @@ app.post("/generate-hero-scenes", async (req, res) => {
                 "X-Runway-Version": "2024-11-06",
               },
               body: JSON.stringify({
-                model: "gen4_turbo",
+                model: "gen4.5",
                 promptText: scene.promptText.slice(0, 1000),
                 duration: 5,
                 ratio: "1280:720",

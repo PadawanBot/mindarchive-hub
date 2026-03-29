@@ -41,7 +41,7 @@ const imageSlots: AssetSlotDef[] = Array.from({ length: 5 }, (_, i) => ({
   dimensions: { minW: 512, minH: 512, maxW: 4096, maxH: 4096 },
 }));
 
-const heroSceneSlots: AssetSlotDef[] = Array.from({ length: 2 }, (_, i) => ({
+const heroSceneSlots: AssetSlotDef[] = Array.from({ length: 5 }, (_, i) => ({
   step: "hero_scenes" as PipelineStep,
   slotKey: `scenes[${i}].video_url`,
   label: `Hero Scene ${i + 1}`,

@@ -762,81 +762,69 @@ const hero_scenes: StepExecutor = async (ctx) => {
   const key = ctx.settings.runway_key;
   if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
 
-  // Get RUNWAY prompts from visual direction
+  // Extract RUNWAY scene prompts from visual direction JSON (same split as image_generation / stock_footage)
   const visualOutput = getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string } | undefined;
-  let scenePrompts: { section: string; dalle_prompt: string }[] = [];
+  let scenePrompts: { section: string; prompt: string }[] = [];
+
   if (visualOutput?.visuals) {
-    let cleaned = visualOutput.visuals.trim();
-    if (cleaned.startsWith("```")) {
-      cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-    }
+    const visuals = visualOutput.visuals;
+    const VD_SEP = "=== VISUAL DIRECTION JSON ===";
+    const vdSepIdx = visuals.indexOf(VD_SEP);
+    let vdJson = vdSepIdx !== -1 ? visuals.slice(vdSepIdx + VD_SEP.length).trim() : visuals.trim();
+    if (vdJson.startsWith("```")) vdJson = vdJson.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
     try {
-      let parsed = JSON.parse(cleaned);
+      let parsed = JSON.parse(vdJson);
       if (!Array.isArray(parsed) && typeof parsed === "object") {
         for (const k of ["scenes", "data", "entries"]) {
-          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+          if (Array.isArray((parsed as Record<string, unknown>)[k])) { parsed = (parsed as Record<string, unknown>)[k]; break; }
         }
       }
-      const scenes = Array.isArray(parsed) ? parsed : [];
-      // Extract RUNWAY-tagged scenes (new format) or fallback to dalle_prompt
-      scenePrompts = scenes
-        .filter((s: Record<string, unknown>) =>
-          (s.tag_type === "RUNWAY" && typeof s.prompt === "string") ||
-          typeof s.dalle_prompt === "string"
-        )
-        .map((s: Record<string, unknown>) => ({
-          section: String(s.scene || s.section || "Hero Scene"),
-          dalle_prompt: String(s.tag_type === "RUNWAY" ? s.prompt : s.dalle_prompt),
-        }));
+      if (Array.isArray(parsed)) {
+        scenePrompts = parsed
+          .filter((s: Record<string, unknown>) =>
+            // Gold standard: tag + runway_prompt
+            (s.tag === "RUNWAY" && typeof s.runway_prompt === "string") ||
+            // Legacy: tag_type + prompt
+            (s.tag_type === "RUNWAY" && typeof s.prompt === "string")
+          )
+          .map((s: Record<string, unknown>) => ({
+            section: String(s.label || s.scene || s.section || `Scene ${s.scene_id || ""}`),
+            prompt: String(s.tag === "RUNWAY" ? s.runway_prompt : s.prompt),
+          }));
+      }
     } catch {}
   }
 
-  // Also try getting prompts from the script for richer descriptions
+  // Fallback: generic cinematic prompts if none found
   if (scenePrompts.length === 0) {
-    const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
-      || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
-
-    // Build cinematic prompts from the script's visual cues
-    const visualCues = script.match(/\[VISUAL CUE:([^\]]+)\]/g) || [];
-    if (visualCues.length > 0) {
-      scenePrompts = visualCues.slice(0, 3).map((cue, i) => ({
-        section: `Scene ${i + 1}`,
-        dalle_prompt: cue.replace(/\[VISUAL CUE:\s*/, "").replace(/\]$/, "").trim(),
-      }));
-    } else {
-      // Generic cinematic fallback — no copyrighted references
-      scenePrompts = [
-        {
-          section: "Cold Open",
-          dalle_prompt: `Cinematic dramatic opening scene. A lone figure stands at the edge of a vast landscape, golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
-        },
-        {
-          section: "Climax",
-          dalle_prompt: `Dramatic confrontation scene. Two powerful figures face each other — one radiating golden energy, the other shrouded in dark shadows. Lightning crackles, intense emotional close-up, movie quality. Topic: ${ctx.project.topic}`,
-        },
-      ];
-    }
+    scenePrompts = [
+      {
+        section: "Cold Open",
+        prompt: `Cinematic dramatic opening. A lone figure at the edge of a vast landscape, golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
+      },
+      {
+        section: "Climax",
+        prompt: `Dramatic peak moment. Powerful contrast of light and shadow, intense atmosphere, cinematic close-up detail, movie quality. Topic: ${ctx.project.topic}`,
+      },
+    ];
   }
 
-  // Generate up to 5 hero scenes via text-to-video (pipeline rule: max 3-5 RUNWAY per video)
-  const toProcess = scenePrompts.slice(0, 5);
-  const scenes: { promptText: string; section: string; taskId: string }[] = [];
+  // Resume support: carry forward scenes that already have taskIds from a prior run
+  type SceneEntry = { promptText: string; section: string; taskId: string; video_url?: string };
+  const prevScenes: SceneEntry[] =
+    (getPrevOutput(ctx.previousSteps, "hero_scenes") as { scenes?: SceneEntry[] })?.scenes || [];
+  const alreadyStarted = new Set(prevScenes.filter(s => s.taskId && !s.taskId.startsWith("error:")).map(s => s.section));
+
+  const toProcess = scenePrompts.slice(0, 5).filter(s => !alreadyStarted.has(s.section));
+  const scenes: SceneEntry[] = [...prevScenes.filter(s => s.taskId && !s.taskId.startsWith("error:"))];
 
   for (const scene of toProcess) {
     try {
-      const promptText = sanitizePrompt(scene.dalle_prompt).slice(0, 1000);
+      const promptText = sanitizePrompt(scene.prompt).slice(0, 1000);
       const result = await generateVideo(key, promptText);
-      scenes.push({
-        section: scene.section || "Hero Scene",
-        promptText,
-        taskId: result.taskId,
-      });
+      scenes.push({ section: scene.section, promptText, taskId: result.taskId });
     } catch (err) {
-      scenes.push({
-        section: scene.section || "Hero Scene",
-        promptText: scene.dalle_prompt.slice(0, 512),
-        taskId: `error: ${String(err)}`,
-      });
+      scenes.push({ section: scene.section, promptText: scene.prompt.slice(0, 512), taskId: `error: ${String(err)}` });
     }
   }
 
@@ -846,11 +834,11 @@ const hero_scenes: StepExecutor = async (ctx) => {
     output: {
       status: successCount > 0 ? "completed" : "failed",
       scenes,
-      total_requested: toProcess.length,
+      total_requested: scenePrompts.length,
       tasks_started: successCount,
-      note: "Video generation tasks started via text-to-video. Auto-polling will check for completion.",
+      note: "Runway tasks started. Auto-polling will check for completion.",
     },
-    cost_cents: successCount * 50,
+    cost_cents: toProcess.filter((_s, i) => !scenes[prevScenes.length + i]?.taskId.startsWith("error:")).length * 50,
   };
 };
 

@@ -283,11 +283,11 @@ export async function POST(request: Request) {
           let heroScenes: { section: string; promptText: string }[] = [];
 
           try {
-            let cleaned = visuals.trim();
-            if (cleaned.startsWith("```")) {
-              cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-            }
-            let parsed = JSON.parse(cleaned);
+            const VD_SEP = "=== VISUAL DIRECTION JSON ===";
+            const vdSepIdx = visuals.indexOf(VD_SEP);
+            let vdJson = vdSepIdx !== -1 ? visuals.slice(vdSepIdx + VD_SEP.length).trim() : visuals.trim();
+            if (vdJson.startsWith("```")) vdJson = vdJson.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+            let parsed = JSON.parse(vdJson);
             if (!Array.isArray(parsed) && typeof parsed === "object") {
               for (const k of ["scenes", "data", "entries"]) {
                 if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
@@ -296,11 +296,14 @@ export async function POST(request: Request) {
             if (Array.isArray(parsed)) {
               heroScenes = parsed
                 .filter((s: Record<string, unknown>) =>
-                  s.tag_type === "RUNWAY" && (typeof s.prompt === "string" || typeof s.dalle_prompt === "string")
+                  // Gold standard: tag + runway_prompt
+                  (s.tag === "RUNWAY" && typeof s.runway_prompt === "string") ||
+                  // Legacy: tag_type + prompt
+                  (s.tag_type === "RUNWAY" && (typeof s.prompt === "string" || typeof s.dalle_prompt === "string"))
                 )
                 .map((s: Record<string, unknown>) => ({
-                  section: String(s.scene || s.section || "Hero Scene"),
-                  promptText: String(s.prompt || s.dalle_prompt),
+                  section: String(s.label || s.scene || s.section || `Scene ${s.scene_id || ""}`),
+                  promptText: String(s.tag === "RUNWAY" ? s.runway_prompt : (s.prompt || s.dalle_prompt)),
                 }))
                 .slice(0, 5);
             }
