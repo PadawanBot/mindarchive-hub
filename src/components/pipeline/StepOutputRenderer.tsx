@@ -8,6 +8,7 @@ import { AudioPlayer } from "./outputs/AudioPlayer";
 import { StockFootageGrid } from "./outputs/StockFootageGrid";
 import { HeroScenesViewer } from "./outputs/HeroScenesViewer";
 import { TextOutput } from "./outputs/TextOutput";
+import { VisualDirectionOutput } from "./outputs/VisualDirectionOutput";
 
 interface StepOutputRendererProps {
   step: string;
@@ -43,6 +44,9 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
           reason={typeof output.reason === "string" ? output.reason : undefined}
           projectId={projectId}
         />
+      ) : step === "visual_direction" ? (
+        /* Visual Direction — two-tab: doc + scene JSON */
+        <VisualDirectionOutput text={text} />
       ) : (
         /* Default — pre-formatted text */
         <TextOutput text={text} />

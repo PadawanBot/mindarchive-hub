@@ -33,46 +33,66 @@ export function buildPrompt(step: PipelineStep, ctx: PromptContext): PromptData 
 
     case "script_writing": {
       const research = (getPrevOutput(ctx.previousSteps, "topic_research") as { research?: string })?.research || "";
-      const sections = ctx.format?.sections?.join(", ") || "hook, intro, body, conclusion, cta";
       const wordMin = ctx.format?.word_count_min || 900;
       const wordMax = ctx.format?.word_count_max || 1400;
-      const wpm = ctx.format?.wpm || 145;
+      const wpm = ctx.format?.wpm || 140;
       const durMin = ctx.format?.duration_min ? Math.round(ctx.format.duration_min / 60) : 6;
       const durMax = ctx.format?.duration_max ? Math.round(ctx.format.duration_max / 60) : 10;
       return {
-        system: `You are an expert YouTube scriptwriter for faceless documentary channels. Write engaging, hook-driven scripts in the style of a Netflix episode.
+        system: `You are an expert YouTube scriptwriter for faceless documentary channels. Write production-ready scripts with explicit scene-by-scene structure.
 
-VISUAL TAG SYSTEM — after each paragraph of narration, add ONE visual tag on a new line:
-[DALLE: <cinematic still image — photorealistic, 4K documentary style, no text in frame>]
-[RUNWAY: <5-10s motion video — hero/peak emotional moment only, max 3-5 total per video>]
-[STOCK: <2-3 keyword search terms for real-world footage>]
-[MOTION_GRAPHIC: <text or data content to display as a card>]
+OUTPUT FORMAT — follow this structure exactly:
 
-Use [DALLE] as the default for most scenes. Use [RUNWAY] ONLY for the most cinematic emotional peaks (max 3-5 per video). Use [STOCK] for real-world footage, environments, archival scenes. Use [MOTION_GRAPHIC] for statistics, titles, labels, checklists — any text on screen.
+1. METADATA HEADER (at the top):
+- Topic, channel name, runtime target, word target
+
+2. PRODUCTION NOTES (brief):
+- Narrative strategy, protagonist(s), psychological framework, the twist/mirror moment
+
+3. VISUAL TAG BUDGET (table):
+- Count of each tag type: [DALLE], [RUNWAY], [STOCK], [MOTION_GRAPHIC]
+- RUNWAY cap: max 4 scenes per video
+
+4. FULL SCRIPT with SCENE-BY-SCENE structure:
+- Group scenes into ACTS with emotional arc labels (e.g., "ACT ONE: THE COLD OPEN (0:00 - 0:07) / EMOTIONAL ARC: CURIOSITY")
+- Each scene gets: [SCENE N -- DESCRIPTIVE TITLE]
+- Then: NARRATION (V.O.): followed by the narration paragraph(s)
+- Then: ONE visual tag on its own line: [DALLE: ...], [RUNWAY: ...], [STOCK: ...], or [MOTION_GRAPHIC: ...]
+
+5. WORD COUNT VERIFICATION (at the bottom):
+- Total narration words, estimated runtime, RUNWAY count check, DALLE text check
+
+VISUAL TAG RULES:
+- [DALLE: <prompt>] — Default for most scenes. Prompt MUST end with "cinematic, photorealistic, 4K documentary style, no text in frame". Never put text in DALLE prompts.
+- [RUNWAY: <prompt>] — 5-10s cinematic motion video. ONLY for peak emotional moments. Max 4 per video.
+- [STOCK: <2-3 search keywords>] — Real-world footage from Pexels. NO fictional characters.
+- [MOTION_GRAPHIC: layout=<type> | text="<content>" | <colour specs>] — Title cards, data cards, checklists, end cards. Layout types: title_card, list_card, checklist, end_card.
+
+Distribution: ~55-60% DALLE, ~15-20% RUNWAY (max 4), ~5-10% STOCK, ~15-20% MOTION_GRAPHIC.
 
 CRITICAL RULES:
 - The voiceover MP3 is the production clock — word count drives runtime
-- [MOTION_GRAPHIC] is a VISUAL SUPPLEMENT only — never replaces narration. Every data point, checklist item, and tactic MUST be fully narrated. The card reinforces narration, not replaces it.
-- Never put text in DALLE prompts — Pillow handles all text overlays
-- DALLE style: "cinematic, photorealistic, 4K documentary style, no text in frame"
-- Include a cold open that hooks in 7 seconds
-- 3-act structure with emotional arc (curiosity, conflict, payoff)
+- [MOTION_GRAPHIC] is a VISUAL SUPPLEMENT ONLY — never replaces narration. Every concept, list item, and data point MUST be fully narrated in the voiceover. Cards reinforce; they never replace.
+- 3-act structure: curiosity → conflict → payoff
+- Cold open must hook in 7 seconds
+- Each scene = one discrete visual moment (15-20 scenes typical for ${durMin}-${durMax} min video)
+- End with Scene N-1 as comment magnet / outro, Scene N as end card [MOTION_GRAPHIC]
 
-Voice style: ${ctx.profile?.voice_style || "professional"}`,
+Voice style: ${ctx.profile?.voice_style || "professional"}
+Channel: ${ctx.profile?.name || "channel"}`,
         user: `Write a YouTube documentary script about: "${ctx.project.topic}"
 
 Research data:
 ${research}
 
 FORMAT REQUIREMENTS:
-- Sections: ${sections}
 - Target word count: ${wordMin}-${wordMax} words
 - Target runtime: ${durMin}-${durMax} minutes at ${wpm} WPM
-- Each paragraph = one visual scene with a visual tag on the next line
-- Start with a strong hook (first 7 seconds)
-- End with a clear CTA
+- 15-20 discrete scenes, each with [SCENE N -- TITLE] marker
+- RUNWAY scenes: max 4 (save for emotional peaks)
+- Include word count verification at the end
 
-Output the complete narration script with visual tags after each paragraph.`,
+Output the complete production-ready script.`,
         maxTokens: 8192,
       };
     }
@@ -107,29 +127,68 @@ Rank by emotional intensity — Hook #1 should be the strongest cold open candid
       const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script
         || (getPrevOutput(ctx.previousSteps, "script_writing") as { script?: string })?.script || "";
       return {
-        system: `You are a visual director for faceless YouTube documentary videos. For each scene/paragraph in the script, generate detailed visual direction and a production spec.
+        system: `You are a cinematographer and visual director for faceless YouTube documentary videos. Produce a comprehensive scene-by-scene visual direction document.
 
-For each scene, describe:
-- Environment, time of day, tone
-- Camera angle, lighting, composition
-- Colour grade direction
-- Style reference (cinematic, documentary, stylized realism)
+OUTPUT FORMAT — follow this structure exactly:
 
-Then assign ONE tag_type per scene and provide the matching production spec:
-- "DALLE": DALL-E 3 prompt — MUST end with "cinematic, photorealistic, 4K documentary style, no text in frame". Include Ken Burns direction (zoom amount like 1.04-1.08, duration, pan direction).
-- "RUNWAY": Runway Gen-3 motion prompt — 5-10 seconds, cinematic movement. Include motion_type (push-in, dolly, pull-back, tracking). Max 3-5 RUNWAY scenes per video — use only for peak emotional/cinematic moments.
-- "STOCK": search_keywords field — 2-3 Pexels keywords for real-world footage (nature, cities, people, abstract — NO fictional characters or anime terms).
-- "MOTION_GRAPHIC": text_content + layout_type (title_card / list_card / checklist / end_card) + colour_scheme with hex values. Use for titles, statistics, checklists, end cards.
+1. ASSET BUDGET SUMMARY (table at top):
+   - Count of each tag type: DALLE, RUNWAY, STOCK, MOTION_GRAPHIC
+   - Which scene numbers use each tag
+   - RUNWAY cap check (max 4 per video)
 
-Distribution: ~60% DALLE (default), ~15% RUNWAY (emotional peaks only), ~10% STOCK (real-world B-roll), ~15% MOTION_GRAPHIC (titles/data/end card).
+2. SCENE-BY-SCENE VISUAL DIRECTION — for EVERY scene in the script, output:
 
-Output as a JSON array. Each entry has:
-- scene (int), tag_type, visual_direction (scene description), prompt/search_keywords/text_content (depending on tag_type)
-- duration (seconds), transition_in, transition_out
-- ken_burns (for DALLE), motion_type (for RUNWAY), layout_type + colour_scheme (for MOTION_GRAPHIC)
+   SCENE N -- SCENE TITLE  [TAG_TYPE]
+   Narration: (1-line summary of what's being said)
+   Environment: (physical space, setting, objects)
+   Time of day: (lighting time context)
+   Camera: (angle, movement, focal length, DOF)
+   Lighting: (key/fill/back, quality, direction, mood)
+   Composition: (framing, rule of thirds, leading lines, negative space)
+   Colour grade: (palette, contrast, saturation, temperature)
+   Style ref: (film/director reference for the DP to match, e.g. "Roger Deakins interior light", "Fincher dinner scenes")
 
-Complete ALL scenes in the script. Do not stop early.`,
-        user: `Create visual direction for this script:\n\n${script.slice(0, 25000)}\n\nChannel niche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}\n\nIMPORTANT: Cover EVERY scene in the script. Do NOT stop early. The script has multiple sections — produce visual direction for ALL of them.`,
+   Then the production spec for the tag type:
+   - DALLE: "DALLE prompt: <prompt ending with cinematic, photorealistic, 4K documentary style, no text in frame>" + "Ken Burns: <direction>. Zoom <amount 1.03-1.08>. <duration>s."
+   - RUNWAY: "Runway prompt: <5-10s motion prompt>" + "Motion type: <camera movement description>"
+   - STOCK: "Stock keywords: <2-3 search terms>" + "Pexels search: <pipe-separated alternative queries>"
+   - MOTION_GRAPHIC: "MG spec: layout=<title_card|list_card|checklist|end_card> | text=\\"<content>\\" | <colour specs with hex values>"
+
+   Transition in: <type + duration> (e.g., "CROSSFADE 0.8s from Scene N-1")
+   Transition out: <type + duration> (e.g., "CROSSFADE 1.0s to Scene N+1")
+
+3. COLOUR NARRATIVE ARC (at the end):
+   - Describe how the colour palette evolves across the 3 acts
+   - How colour temperature, saturation, and contrast support the emotional arc
+
+TAG TYPE RULES:
+- DALLE (~55-60%): Default for most scenes. Prompt MUST end with "cinematic, photorealistic, 4K documentary style, no text in frame". NEVER put text in DALLE prompts. Include Ken Burns (zoom 1.03-1.08, duration, direction).
+- RUNWAY (~15-20%, max 4): Peak emotional/cinematic moments ONLY. 5-10s motion. Include motion_type.
+- STOCK (~5-10%): Real-world footage. NO fictional characters or anime terms. Include Pexels-compatible search keywords.
+- MOTION_GRAPHIC (~15-20%): Text/data cards. Include layout_type, text_content, colour_scheme with hex values. Types: title_card, list_card, checklist, end_card.
+
+CRITICAL: Cover EVERY scene in the script. Do not stop early. Match scene numbers 1:1 with the script.
+
+4. VISUAL DIRECTION JSON (output after the doc above):
+
+After the Colour Narrative Arc section, output the line:
+=== VISUAL DIRECTION JSON ===
+Then output a raw JSON array (no markdown fences) with one object per scene:
+{
+  "scene_id": <integer — scene number>,
+  "label": <string — scene title, e.g. "7-SECOND COLD OPEN">,
+  "act": <string — "ONE", "TWO", or "THREE">,
+  "tag": <string — "DALLE", "RUNWAY", "STOCK", or "MOTION_GRAPHIC">,
+  "narration_summary": <string — 1-sentence summary of narration>,
+  "transition_in": <string — e.g. "HARD CUT from black", "CROSSFADE 0.8s from Scene 1">,
+  "transition_out": <string — e.g. "CROSSFADE 0.8s to Scene 2", "CUT to Scene 3">,
+  <tag-specific fields>:
+    DALLE → "dalle_prompt": <full DALL-E prompt string>, "ken_burns": <e.g. "Slow zoom-in. Zoom 1.04. 5s duration.">
+    RUNWAY → "runway_prompt": <motion prompt string>, "motion_type": <camera movement description>
+    STOCK → "stock_keywords": <2-3 search terms string>, "pexels_keywords": <array of alternative search strings>
+    MOTION_GRAPHIC → "motion_graphic_spec": <layout + text + colour spec string>
+}`,
+        user: `Create visual direction for this script:\n\n${script.slice(0, 25000)}\n\nChannel: ${ctx.profile?.name || "channel"}\nNiche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}\n\nIMPORTANT: Cover EVERY scene. Do NOT stop early. Produce the full asset budget summary, all scene directions, the colour narrative arc, AND the JSON array (after the line === VISUAL DIRECTION JSON ===).`,
         maxTokens: 16384,
       };
     }
