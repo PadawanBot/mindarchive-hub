@@ -25,7 +25,8 @@ export default async function ProjectsPage() {
   const getProfileName = (id: string) =>
     profiles.find((p) => p.id === id)?.name || "Unknown";
 
-  const sorted = [...projects].reverse();
+  // getAll returns newest-first from Supabase — use directly
+  const sorted = projects;
 
   return (
     <div className="space-y-8">

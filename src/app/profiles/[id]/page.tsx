@@ -9,14 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Save, Trash2, Loader2 } from "lucide-react";
-import type { ChannelProfile } from "@/types";
+import { ArrowLeft, Save, Trash2, Loader2, FolderOpen, Clock, DollarSign, Zap } from "lucide-react";
+import type { ChannelProfile, Project } from "@/types";
 import { TopicBankList } from "@/components/topic-bank-list";
 
 export default function ProfileDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [profile, setProfile] = useState<ChannelProfile | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -26,9 +27,18 @@ export default function ProfileDetailPage() {
     if (data.success) setProfile(data.data);
   }, [params.id]);
 
+  const loadProjects = useCallback(async () => {
+    const res = await fetch("/api/projects");
+    const data = await res.json();
+    if (data.success) {
+      setProjects(data.data.filter((p: Project) => p.profile_id === params.id));
+    }
+  }, [params.id]);
+
   useEffect(() => {
     loadProfile();
-  }, [loadProfile]);
+    loadProjects();
+  }, [loadProfile, loadProjects]);
 
   const updateField = (key: string, value: string) =>
     setProfile((prev) => (prev ? { ...prev, [key]: value } : null));
@@ -209,6 +219,62 @@ export default function ProfileDetailPage() {
         </Button>
         {saved && <span className="text-sm text-success">Saved!</span>}
       </div>
+
+      {/* Channel Projects */}
+      <Card>
+        <div className="flex items-center justify-between">
+          <CardTitle>Channel Projects</CardTitle>
+          <Link href={`/projects/new?profile=${params.id}`}>
+            <Button size="sm" variant="outline">
+              <Zap className="h-3 w-3 mr-1" />
+              New Production
+            </Button>
+          </Link>
+        </div>
+        <CardContent className="mt-4">
+          {projects.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground">
+              <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No projects yet for this channel.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {projects.map((project) => (
+                <Link key={project.id} href={`/projects/${project.id}`}>
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{project.title}</p>
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {new Date(project.created_at).toLocaleDateString()}
+                        </span>
+                        {project.total_cost_cents > 0 && (
+                          <span className="flex items-center gap-1">
+                            <DollarSign className="h-3 w-3" />
+                            ${(project.total_cost_cents / 100).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Badge
+                      variant={
+                        project.status === "completed"
+                          ? "success"
+                          : project.status === "failed"
+                          ? "destructive"
+                          : "default"
+                      }
+                    >
+                      {project.status}
+                    </Badge>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Topic Bank */}
       <TopicBankList profileId={params.id as string} />

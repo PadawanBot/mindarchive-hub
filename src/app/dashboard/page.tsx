@@ -21,7 +21,8 @@ export default async function DashboardPage() {
 
   const completedCount = projects.filter((p) => p.status === "completed").length;
   const totalCost = projects.reduce((sum, p) => sum + (p.total_cost_cents || 0), 0);
-  const recentProjects = projects.slice(-5).reverse();
+  // getAll returns newest-first from Supabase — take first 5
+  const recentProjects = projects.slice(0, 5);
 
   return (
     <div className="space-y-8">
