@@ -386,9 +386,23 @@ const voiceover_generation: StepExecutor = async (ctx) => {
   if (!voiceId) return { output: { status: "skipped", reason: "No voice ID in channel profile" }, cost_cents: 0 };
 
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
-  // Strip visual tags and section headers for voiceover
-  const narration = script
+  // Strip metadata sections that must not be read aloud
+  const strippedMeta = script
+    // Remove WORD COUNT VERIFICATION block and everything after it
+    .replace(/\n*WORD COUNT VERIFICATION[\s\S]*/i, "")
+    // Remove PRODUCTION NOTES block (up to the next ALL-CAPS section or ACT line)
+    .replace(/PRODUCTION NOTES[\s\S]*?(?=\nVISUAL TAG BUDGET|\nACT ONE|\n\[SCENE)/i, "")
+    // Remove VISUAL TAG BUDGET block
+    .replace(/VISUAL TAG BUDGET[\s\S]*?(?=\nACT ONE|\n\[SCENE)/i, "")
+    // Remove METADATA HEADER lines (Topic:, Channel:, Runtime:, Word target:)
+    .replace(/^(Topic|Channel|Runtime target|Word target|Format)\s*:.*$/gim, "");
+
+  // Strip visual tags, scene markers, act headers, and formatting for voiceover
+  const narration = strippedMeta
     .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE)[:\s][^\]]*\]/gi, "")
+    .replace(/^\[SCENE\s+\d+[^\]]*\]\s*$/gim, "")
+    .replace(/^ACT (ONE|TWO|THREE)\s*:.*$/gim, "")
+    .replace(/^NARRATION\s*\(V\.O\.\)\s*:?\s*/gim, "")
     .replace(/^#{1,3}\s.*$/gm, "")
     .replace(/^---+$/gm, "")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
