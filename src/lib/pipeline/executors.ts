@@ -629,79 +629,103 @@ const stock_footage: StepExecutor = async (ctx) => {
   const key = ctx.settings.pexels_key;
   if (!key) return { output: { status: "skipped", reason: "No Pexels API key configured" }, cost_cents: 0 };
 
-  // Use LLM to generate Pexels-optimized search queries based on the visual direction
-  // Pexels is a real-world stock footage platform — queries must describe visual atmosphere,
-  // mood, lighting, and abstract visuals rather than specific characters or plot points.
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
 
-  let queries: string[] = [];
+  // Extract STOCK scene queries from visual direction JSON (same split as image_generation)
+  type StockScene = { scene_id: number; label: string; query: string };
+  let stockScenes: StockScene[] = [];
   let llmCost = 0;
 
+  const VD_SEPARATOR = "=== VISUAL DIRECTION JSON ===";
+  const vdSepIdx = visuals.indexOf(VD_SEPARATOR);
+  const vdJsonSource = vdSepIdx !== -1 ? visuals.slice(vdSepIdx + VD_SEPARATOR.length).trim() : visuals.trim();
+  const vdJsonClean = vdJsonSource.startsWith("```")
+    ? vdJsonSource.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "")
+    : vdJsonSource;
+
   try {
-    const queryResult = await callLLM(ctx,
-      `You are a stock footage search specialist for Pexels.com. Your job is to translate creative briefs into effective Pexels search queries.
+    let parsed = JSON.parse(vdJsonClean);
+    if (!Array.isArray(parsed) && typeof parsed === "object") {
+      for (const k of ["scenes", "data", "entries"]) {
+        if (Array.isArray((parsed as Record<string, unknown>)[k])) { parsed = (parsed as Record<string, unknown>)[k]; break; }
+      }
+    }
+    if (Array.isArray(parsed)) {
+      stockScenes = parsed
+        .filter((s: Record<string, unknown>) => s.tag === "STOCK" || s.tag_type === "STOCK")
+        .map((s: Record<string, unknown>) => {
+          // Prefer pexels_keywords[0], fall back to stock_keywords, then label
+          const pexels = Array.isArray(s.pexels_keywords) && s.pexels_keywords.length > 0
+            ? String(s.pexels_keywords[0])
+            : null;
+          const query = pexels || (typeof s.stock_keywords === "string" ? s.stock_keywords : String(s.label || "atmospheric footage"));
+          return { scene_id: Number(s.scene_id), label: String(s.label || `Scene ${s.scene_id}`), query };
+        });
+    }
+  } catch { /* fall through to LLM */ }
 
-CRITICAL RULES:
-- Pexels only has REAL-WORLD footage (nature, cities, people, abstract, particles, etc.)
-- NEVER use character names, anime terms, cartoon references, or fictional concepts
-- Focus on VISUAL ATMOSPHERE: lighting, mood, color palette, motion, texture
-- Each query should be 2-4 words for best Pexels results
-- Think about B-roll that would visually complement the narration
+  // Fall back to LLM-generated queries if visual direction JSON not available
+  let queries: { scene_id: number | null; label: string; query: string }[] = stockScenes.length > 0
+    ? stockScenes
+    : [];
 
-Example translations:
-- "Epic battle scene with energy blasts" → "dramatic lightning storm dark sky"
-- "Character discovers mysterious notebook" → "old leather book dramatic lighting"
-- "Dark supernatural power awakening" → "dark fog particles glowing"
-- "Intense confrontation between rivals" → "dramatic shadows silhouette contrast"
-- "Transformation scene with aura" → "glowing particles energy abstract"`,
-      `Generate exactly 5 Pexels search queries for B-roll footage that visually complements this video production.
+  if (queries.length === 0) {
+    try {
+      const queryResult = await callLLM(ctx,
+        `You are a stock footage search specialist for Pexels.com. Translate creative briefs into effective Pexels search queries.
+CRITICAL: Pexels only has REAL-WORLD footage. NEVER use character names, anime terms, or fictional concepts.
+Focus on VISUAL ATMOSPHERE: lighting, mood, color palette, motion, texture. 2-4 words per query.`,
+        `Generate Pexels search queries for STOCK footage scenes in this video.
 
 Topic: ${ctx.project.topic}
 Visual direction excerpt: ${visuals.slice(0, 1500)}
 Script excerpt: ${script.slice(0, 1000)}
 
-Output as a JSON array of 5 strings. Example: ["dark atmospheric fog", "glowing particles abstract", "dramatic sky clouds timelapse", "old book candlelight", "energy lightning dark"]`,
-      500
-    );
-    llmCost = estimateCost(ctx, queryResult.inputTokens, queryResult.outputTokens);
-
-    // Parse the JSON array from the LLM response
-    const text = queryResult.text.trim();
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(parsed)) {
-        queries = parsed.filter((q: unknown) => typeof q === "string").slice(0, 5);
+Output as a JSON array of strings (one per STOCK scene, max 10).`,
+        500
+      );
+      llmCost = estimateCost(ctx, queryResult.inputTokens, queryResult.outputTokens);
+      const text = queryResult.text.trim();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed)) {
+          queries = parsed
+            .filter((q: unknown) => typeof q === "string")
+            .slice(0, 10)
+            .map((q: string, i: number) => ({ scene_id: null, label: `Stock Scene ${i + 1}`, query: q }));
+        }
       }
-    }
-  } catch {
-    // Fallback to generic atmospheric queries
-    queries = ["dramatic dark atmosphere", "abstract particles glowing", "dark sky storm clouds", "mysterious fog light rays", "energy lightning abstract"];
+    } catch { /* fall through */ }
   }
 
   if (queries.length === 0) {
-    queries = ["dramatic dark atmosphere", "abstract particles glowing", "dark sky storm clouds"];
+    queries = [
+      { scene_id: null, label: "Stock Scene 1", query: "dramatic dark atmosphere" },
+      { scene_id: null, label: "Stock Scene 2", query: "abstract particles glowing" },
+      { scene_id: null, label: "Stock Scene 3", query: "dark sky storm clouds" },
+    ];
   }
 
-  const results: { query: string; video_count: number; videos: { id: number; url: string; file_url: string; thumbnail: string; duration: number }[] }[] = [];
-  for (const q of queries.slice(0, 5)) {
-    const videos = await searchVideos(key, q, 3);
+  const results: { scene_id: number | null; label: string; query: string; video_count: number; videos: { id: number; url: string; file_url: string; thumbnail: string; duration: number }[] }[] = [];
+  for (const q of queries.slice(0, 10)) {
+    const videos = await searchVideos(key, q.query, 3);
     results.push({
-      query: q,
+      scene_id: q.scene_id,
+      label: q.label,
+      query: q.query,
       video_count: videos.length,
       videos: videos.map(v => {
-        // Get the best quality direct video file URL
         const bestFile = v.video_files
           ?.sort((a, b) => (b.width || 0) - (a.width || 0))
           .find(f => f.quality === "hd") || v.video_files?.[0];
-        // Get the first thumbnail picture
         const thumbnail = v.video_pictures?.[0]?.picture || "";
         return {
           id: v.id,
-          url: v.url, // Pexels page URL (for attribution)
-          file_url: bestFile?.link || v.url, // Direct playable video file
-          thumbnail, // Static preview image
+          url: v.url,
+          file_url: bestFile?.link || v.url,
+          thumbnail,
           duration: v.duration,
         };
       }),
