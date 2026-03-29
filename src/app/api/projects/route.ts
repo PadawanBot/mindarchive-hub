@@ -33,8 +33,9 @@ export async function POST(request: Request) {
       },
     } as Omit<Project, "id" | "created_at" | "updated_at">);
 
-    // Mark topic as in_production in the bank
+    // Link to topic bank
     if (body.topic_bank_id) {
+      // Created from an existing topic bank entry — mark it in_production
       try {
         await update<TopicBankItem>("topic_bank", body.topic_bank_id, {
           status: "in_production",
@@ -42,6 +43,22 @@ export async function POST(request: Request) {
         } as Partial<TopicBankItem>);
       } catch (err) {
         console.error("[projects] Failed to update topic bank status:", err);
+      }
+    } else if (body.profile_id && body.topic) {
+      // Created directly — auto-create a topic bank entry so the topic is tracked
+      try {
+        await create<TopicBankItem>("topic_bank", {
+          profile_id: body.profile_id,
+          title: body.topic,
+          angle: "",
+          keywords: [],
+          estimated_interest: "medium",
+          reasoning: "Added automatically when project was created.",
+          status: "in_production",
+          project_id: project.id,
+        } as Omit<TopicBankItem, "id" | "created_at" | "updated_at">);
+      } catch (err) {
+        console.error("[projects] Failed to auto-create topic bank entry:", err);
       }
     }
 

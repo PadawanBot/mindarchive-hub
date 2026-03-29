@@ -34,7 +34,7 @@ Respond with a JSON array of exactly 10 objects, each with:
 Return ONLY the JSON array, no markdown or explanation.`;
 }
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {

@@ -61,7 +61,18 @@ export function TopicBankList({ profileId }: { profileId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profile_id: profileId }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: { success: boolean; error?: string };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Vercel timeout or unexpected error — surface it clearly
+        setError(res.status === 504 || res.status === 408
+          ? "Request timed out — the AI is taking too long. Please try again."
+          : `Server error (${res.status}): ${text.slice(0, 150)}`);
+        setMining(false);
+        return;
+      }
       if (!data.success) {
         setError(data.error || "Mining failed");
       } else {
