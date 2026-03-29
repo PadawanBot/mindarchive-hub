@@ -28,8 +28,8 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
       <h3 className="text-sm font-semibold text-muted-foreground mb-2">{label}</h3>
 
       {/* Image Generation — show thumbnails */}
-      {step === "image_generation" && output?.images && Array.isArray(output.images) ? (
-        <ImageGallery output={output} />
+      {step === "image_generation" ? (
+        <ImageGallery output={output} projectId={projectId} />
       ) : step === "voiceover_generation" && output ? (
         /* Voiceover — show audio player if URL available */
         <AudioPlayer output={output} />
