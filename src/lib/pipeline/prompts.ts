@@ -193,7 +193,7 @@ Then output a raw JSON array (no markdown fences) with one object per scene:
     MOTION_GRAPHIC → "motion_graphic_spec": <layout + text + colour spec string>
 }`,
         user: `Create visual direction for this script:\n\n${script.slice(0, 25000)}\n\nChannel: ${ctx.profile?.name || "channel"}\nNiche: ${ctx.profile?.niche || "general"}\nBrand colors: ${ctx.profile?.brand_colors?.join(", ") || "none specified"}\n\nIMPORTANT: Cover EVERY scene. Do NOT stop early. Produce the full asset budget summary, all scene directions, the colour narrative arc, AND the JSON array (after the line === VISUAL DIRECTION JSON ===).`,
-        maxTokens: 16384,
+        maxTokens: 32768,
       };
     }
 
