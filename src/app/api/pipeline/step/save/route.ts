@@ -45,9 +45,15 @@ export async function POST(request: Request) {
     // Auto-sync asset records (best-effort)
     await syncStepAssets(project_id, step, saveData.output);
 
-    // Check if all done
+    // Check if all done.
+    // Guard: only fire if no later steps are un-started (prevents premature
+    // completion when skippable steps 16-18 have no DB rows yet and step 15 saves).
     const updatedSteps = await getStepsByProject(project_id);
-    const allCompleted = PIPELINE_STEPS.every(s => {
+    const currentStepOrder = PIPELINE_STEPS.find(s => s.id === step)?.order ?? 0;
+    const hasLaterUnstartedSteps = PIPELINE_STEPS
+      .filter(s => s.order > currentStepOrder)
+      .some(s => !updatedSteps.find(us => us.step === s.id));
+    const allCompleted = !hasLaterUnstartedSteps && PIPELINE_STEPS.every(s => {
       const sr = updatedSteps.find(us => us.step === s.id);
       return sr?.status === "completed" || sr?.status === "skipped" || s.skippable;
     });

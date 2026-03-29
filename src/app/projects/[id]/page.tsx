@@ -45,6 +45,9 @@ export default function ProjectDetailPage() {
   const [auditing, setAuditing] = useState(false);
   const [preProdCollapsed, setPreProdCollapsed] = useState(false);
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
+  const [researchGate, setResearchGate] = useState(false);
+  const [researchNotes, setResearchNotes] = useState("");
+  const [savingResearchNotes, setSavingResearchNotes] = useState(false);
 
   const loadProject = useCallback(async () => {
     try {
@@ -243,11 +246,42 @@ export default function ProjectDetailPage() {
         const d = await res.json();
         if (d.success) freshSteps = d.data;
       } catch {}
+
+      // Research review gate: pause after topic_research before script_writing
+      if (step.id === "topic_research") {
+        setCurrentStep(null);
+        setRunning(false);
+        setResearchGate(true);
+        return; // resume via continueFromResearchGate
+      }
     }
 
     setCurrentStep(null);
     setRunning(false);
     await loadProject();
+  };
+
+  const continueFromResearchGate = async () => {
+    setSavingResearchNotes(true);
+    // Save user notes into topic_research output so script_writing can use them
+    if (researchNotes.trim()) {
+      try {
+        await fetch("/api/pipeline/step/update-output", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: params.id,
+            step: "topic_research",
+            output_update: { user_notes: researchNotes.trim() },
+          }),
+        });
+      } catch {}
+    }
+    setSavingResearchNotes(false);
+    setResearchGate(false);
+    setResearchNotes("");
+    // Resume pipeline from script_writing onwards
+    runAllSteps();
   };
 
   const rerunProduction = async () => {
@@ -256,14 +290,22 @@ export default function ProjectDetailPage() {
     abortRef.current = false;
 
     // Reset production steps (skipped/completed) back to pending
+    // Also reset project status so the allCompleted check re-fires correctly
     const prodStepIds = PROD_STEPS.map(s => s.id);
     try {
-      const res = await fetch("/api/pipeline/step/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: params.id, steps: prodStepIds }),
-      });
-      const data = await res.json();
+      const [resetRes] = await Promise.all([
+        fetch("/api/pipeline/step/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_id: params.id, steps: prodStepIds }),
+        }),
+        fetch(`/api/projects/${params.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "production" }),
+        }),
+      ]);
+      const data = await resetRes.json();
       if (!data.success) { setError(data.error || "Failed to reset steps"); setRunning(false); return; }
     } catch (err) { setError(String(err)); setRunning(false); return; }
 
@@ -569,9 +611,16 @@ export default function ProjectDetailPage() {
                 {completedCount > 0 ? "Resume Pipeline" : "Run Pipeline"}
               </Button>
               {project.status === "completed" && (
-                <Button variant="outline" onClick={rerunProduction}>
-                  <RefreshCw className="h-4 w-4 mr-2" /> Re-run Production
-                </Button>
+                <>
+                  <Button variant="outline" onClick={rerunProduction}>
+                    <RefreshCw className="h-4 w-4 mr-2" /> Re-run Production
+                  </Button>
+                  <Link href={`/projects/new?followup_from=${params.id}&profile_id=${project.profile_id}`}>
+                    <Button variant="outline">
+                      <Play className="h-4 w-4 mr-2" /> Create Follow-Up
+                    </Button>
+                  </Link>
+                </>
               )}
             </>
           )}
@@ -598,6 +647,38 @@ export default function ProjectDetailPage() {
           <CardContent className="flex items-start gap-3 text-red-400">
             <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
             <p className="text-sm">{error}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Research review gate */}
+      {researchGate && (
+        <Card className="border-blue-500/40 bg-blue-500/5">
+          <CardTitle className="flex items-center gap-2 text-base text-blue-300">
+            <AlertCircle className="h-4 w-4" />
+            Review Research Before Script Writing
+          </CardTitle>
+          <CardContent className="space-y-3 mt-2">
+            <p className="text-xs text-muted-foreground">
+              Topic research is complete. Review the output in the step below, then add any directions or focus areas for the scriptwriter before continuing.
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Notes / directions for the scriptwriter <span className="opacity-60">(optional)</span></label>
+              <textarea
+                className="w-full min-h-[80px] text-sm bg-muted border border-muted-foreground/20 rounded-lg px-3 py-2 resize-y focus:outline-none focus:border-blue-500/50"
+                placeholder="e.g. Focus on the emotional arc of the rivalry. Emphasise the final castle battle. Keep it under 8 minutes. Add a cliffhanger for a follow-up episode..."
+                value={researchNotes}
+                onChange={e => setResearchNotes(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={continueFromResearchGate} disabled={savingResearchNotes}>
+                {savingResearchNotes ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : <><Play className="h-4 w-4 mr-2" /> Continue to Script Writing</>}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setResearchGate(false)} disabled={savingResearchNotes}>
+                Dismiss
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
