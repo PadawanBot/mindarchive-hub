@@ -86,12 +86,14 @@ app.post("/llm", async (req, res) => {
       job.progress = 10;
 
       const client = new Anthropic({ apiKey });
-      const message = await client.messages.create({
+      // Use streaming to avoid SDK 10-minute timeout on large maxTokens
+      const stream = await client.messages.stream({
         model: llmModel,
         max_tokens: maxTokens || 16384,
         system,
         messages: [{ role: "user", content: prompt }],
       });
+      const message = await stream.finalMessage();
 
       const text = message.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
