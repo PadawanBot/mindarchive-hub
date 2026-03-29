@@ -20,9 +20,10 @@ import {
   Image,
   Film,
   Clock,
+  Repeat2,
 } from "lucide-react";
 import Link from "next/link";
-import type { ChannelProfile, FormatPreset, TopicSuggestion, TopicBankItem } from "@/types";
+import type { ChannelProfile, FormatPreset, TopicSuggestion, TopicBankItem, Project } from "@/types";
 
 type WizardStep = "setup" | "research" | "plan" | "confirm";
 
@@ -68,6 +69,10 @@ function NewProductionPage() {
   const [formatId, setFormatId] = useState("");
   const [nicheInput, setNicheInput] = useState("");
 
+  // Follow-up state
+  const [followupProject, setFollowupProject] = useState<Pick<Project, "id" | "topic"> | null>(null);
+  const [followupContext, setFollowupContext] = useState<string>("");
+
   // Topic bank state
   const [bankTopics, setBankTopics] = useState<TopicBankItem[]>([]);
   const [topicBankId, setTopicBankId] = useState<string | null>(null);
@@ -99,6 +104,35 @@ function NewProductionPage() {
             setSelectedTopic({ title: t.title, angle: t.angle, keywords: t.keywords, estimated_interest: t.estimated_interest, reasoning: t.reasoning });
             setTopicBankId(t.id);
             setStep("plan");
+          }
+        });
+      }
+
+      // Handle follow-up: /projects/new?followup_from=X&profile_id=Y
+      const followupFrom = searchParams.get("followup_from");
+      if (followupFrom) {
+        Promise.all([
+          fetch(`/api/projects/${followupFrom}`).then(r => r.json()),
+          fetch(`/api/pipeline/steps?project_id=${followupFrom}`).then(r => r.json()),
+        ]).then(([projData, stepsData]) => {
+          if (projData.success && projData.data) {
+            const orig = projData.data as Project;
+            setFollowupProject({ id: orig.id, topic: orig.topic });
+            // Pre-fill profile + format from original
+            if (orig.profile_id) {
+              setProfileId(orig.profile_id);
+              const p = (profilesData.data as ChannelProfile[])?.find((x) => x.id === orig.profile_id);
+              if (p?.niche) setNicheInput(p.niche);
+            }
+            if (orig.format_id) setFormatId(orig.format_id);
+            // Extract original script as follow-up context (first 4000 chars)
+            if (stepsData.success && Array.isArray(stepsData.data)) {
+              const scriptStep = stepsData.data.find((s: { step: string; status: string; output?: { script?: string } }) =>
+                s.step === "script_writing" && s.status === "completed"
+              );
+              const scriptText = scriptStep?.output?.script || "";
+              setFollowupContext(scriptText.slice(0, 4000));
+            }
           }
         });
       }
@@ -157,6 +191,13 @@ function NewProductionPage() {
           format_id: formatId,
           additional_notes: additionalNotes,
           ...(topicBankId ? { topic_bank_id: topicBankId } : {}),
+          ...(followupProject ? {
+            metadata: {
+              followup_from: followupProject.id,
+              followup_original_topic: followupProject.topic,
+              followup_context: followupContext,
+            }
+          } : {}),
         }),
       });
       const text = await res.text();
@@ -188,9 +229,18 @@ function NewProductionPage() {
         </Link>
         <div>
           <h1 className="text-2xl font-bold">New Production</h1>
-          <p className="text-muted-foreground mt-1">
-            Create a new video from research to final render
-          </p>
+          {followupProject ? (
+            <div className="flex items-center gap-2 mt-1">
+              <Badge variant="outline" className="text-xs gap-1">
+                <Repeat2 className="h-3 w-3" />
+                Follow-up from: {followupProject.topic}
+              </Badge>
+            </div>
+          ) : (
+            <p className="text-muted-foreground mt-1">
+              Create a new video from research to final render
+            </p>
+          )}
         </div>
       </div>
 
@@ -550,6 +600,20 @@ function NewProductionPage() {
                   <div className="col-span-2">
                     <span className="text-muted-foreground">Notes:</span>
                     <p className="text-xs mt-1">{additionalNotes}</p>
+                  </div>
+                )}
+                {followupProject && (
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground">Follow-up from:</span>
+                    <p className="text-xs mt-1 flex items-center gap-1">
+                      <Repeat2 className="h-3 w-3 shrink-0" />
+                      {followupProject.topic}
+                    </p>
+                    {followupContext && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Original script context will be provided to the scriptwriter.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

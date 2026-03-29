@@ -138,7 +138,11 @@ const topic_research: StepExecutor = async (ctx) => {
 };
 
 const script_writing: StepExecutor = async (ctx) => {
-  const research = (getPrevOutput(ctx.previousSteps, "topic_research") as { research?: string })?.research || "";
+  const researchOutput = getPrevOutput(ctx.previousSteps, "topic_research") as { research?: string; user_notes?: string } | undefined;
+  const research = researchOutput?.research || "";
+  const userNotes = researchOutput?.user_notes || "";
+  const followupContext = (ctx.project.metadata?.followup_context as string) || "";
+  const followupOriginalTopic = (ctx.project.metadata?.followup_original_topic as string) || "";
   const wordMin = ctx.format?.word_count_min || 900;
   const wordMax = ctx.format?.word_count_max || 1400;
   const wpm = ctx.format?.wpm || 140;
@@ -180,7 +184,7 @@ Channel: ${ctx.profile?.name || "channel"}`,
     `Write a YouTube documentary script about: "${ctx.project.topic}"
 
 Research data:
-${research}
+${research}${userNotes ? `\n\nSCRIPTWRITER DIRECTIONS FROM PRODUCER:\n${userNotes}` : ""}${followupContext ? `\n\nFOLLOW-UP CONTEXT — This is a follow-up to a previous production on: "${followupOriginalTopic}"\nThe audience has already watched the original. Build on the narrative, reference the previous video's themes, and deepen the exploration. Do NOT repeat the same content. Original script excerpt for context:\n${followupContext}` : ""}
 
 FORMAT REQUIREMENTS:
 - Target word count: ${wordMin}-${wordMax} words
