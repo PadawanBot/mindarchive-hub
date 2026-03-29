@@ -145,27 +145,29 @@ export async function POST(request: Request) {
         const visualStep = existingSteps.find(s => s.step === "visual_direction");
         const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
         let dallePrompts: string[] = [];
-        let cleaned = visuals.trim();
+        // Split on separator if present (gold standard visual direction format)
+        const separator = "=== VISUAL DIRECTION JSON ===";
+        let jsonPart = visuals.includes(separator) ? visuals.split(separator)[1] : visuals;
+        let cleaned = jsonPart.trim();
         if (cleaned.startsWith("```")) {
           cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
         }
         try {
-          let parsed = JSON.parse(cleaned);
-          if (!Array.isArray(parsed) && typeof parsed === "object") {
-            for (const k of ["scenes", "data", "entries"]) {
-              if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+          const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed)) {
+              dallePrompts = parsed
+                .filter((s: Record<string, unknown>) =>
+                  // Gold standard: tag + dalle_prompt; Legacy: tag_type + prompt
+                  ((s.tag === "DALLE" || s.tag_type === "DALLE") &&
+                   (typeof s.dalle_prompt === "string" || typeof s.prompt === "string"))
+                )
+                .map((s: Record<string, unknown>) =>
+                  (s.dalle_prompt || s.prompt) as string
+                )
+                .slice(0, 15);
             }
-          }
-          if (Array.isArray(parsed)) {
-            dallePrompts = parsed
-              .filter((s: Record<string, unknown>) =>
-                (s.tag_type === "DALLE" && typeof s.prompt === "string") ||
-                typeof s.dalle_prompt === "string"
-              )
-              .map((s: Record<string, unknown>) =>
-                (s.tag_type === "DALLE" ? s.prompt : s.dalle_prompt) as string
-              )
-              .slice(0, 15);
           }
         } catch {}
 
