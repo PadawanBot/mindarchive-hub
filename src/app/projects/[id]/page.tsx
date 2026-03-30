@@ -21,7 +21,7 @@ import {
   ChevronRight,
   ClipboardCheck,
 } from "lucide-react";
-import type { Project, StepResult } from "@/types";
+import type { PipelineStep, Project, StepResult } from "@/types";
 import { STEPS, PRE_PROD_STEPS, PROD_STEPS, OUTPUT_LABELS } from "@/components/pipeline/constants";
 import { StepRow, statusVariant } from "@/components/pipeline/StepRow";
 import { StepOutputRenderer } from "@/components/pipeline/StepOutputRenderer";
@@ -560,17 +560,18 @@ export default function ProjectDetailPage() {
   // Collect completed step outputs for display below the pipeline
   // Production asset steps (image_generation, etc.) also show when they have any status,
   // so the UI can fetch assets from the DB even if the step output is incomplete.
-  const ASSET_STEPS = ["image_generation", "voiceover_generation", "stock_footage", "hero_scenes"];
+  const ASSET_STEPS: PipelineStep[] = ["image_generation", "voiceover_generation", "stock_footage", "hero_scenes"];
   const maxCompletedOrder = Math.max(0, ...steps.filter(s => s.status === "completed").map(s => STEPS.find(d => d.id === s.step)?.order || 0));
 
-  const completedOutputs = steps
+  // Use explicit type so we can push asset step placeholders later
+  type OutputEntry = { step: PipelineStep; label: string; text: string; order: number };
+  const completedOutputs: OutputEntry[] = steps
     .filter(s =>
       (s.status === "completed" && s.output && Object.keys(s.output).length > 0) ||
       (ASSET_STEPS.includes(s.step) && s.status !== "pending")
     )
     .map(s => {
       const def = STEPS.find(d => d.id === s.step);
-      // Find the main text value in the output
       let mainText = "";
       let label = def?.label || s.step;
       if (s.output) {
@@ -587,12 +588,12 @@ export default function ProjectDetailPage() {
     });
 
   // Inject missing asset steps that the pipeline has passed (no DB row but assets may exist)
-  const existingStepIds = new Set<string>(completedOutputs.map(o => o.step));
+  const existingStepIds = new Set<PipelineStep>(completedOutputs.map(o => o.step));
   for (const assetStepId of ASSET_STEPS) {
     if (existingStepIds.has(assetStepId)) continue;
     const def = STEPS.find(d => d.id === assetStepId);
     if (def && def.order <= maxCompletedOrder) {
-      completedOutputs.push({ step: def.id, label: def.label, text: "", order: def.order });
+      completedOutputs.push({ step: assetStepId, label: def.label, text: "", order: def.order });
     }
   }
 
