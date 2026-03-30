@@ -1,12 +1,12 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, FolderOpen, Clock, DollarSign } from "lucide-react";
-import { getAll } from "@/lib/store";
+import { Plus, FolderOpen, Clock, DollarSign, Loader2 } from "lucide-react";
 import type { Project, ChannelProfile } from "@/types";
-
-export const dynamic = "force-dynamic";
 
 const statusVariant: Record<string, "default" | "success" | "warning" | "destructive"> = {
   draft: "default",
@@ -18,15 +18,30 @@ const statusVariant: Record<string, "default" | "success" | "warning" | "destruc
   failed: "destructive",
 };
 
-export default async function ProjectsPage() {
-  const projects = await getAll<Project>("projects");
-  const profiles = await getAll<ChannelProfile>("profiles");
+export default function ProjectsPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [pRes, prRes] = await Promise.all([
+          fetch("/api/projects"),
+          fetch("/api/profiles"),
+        ]);
+        const pData = await pRes.json();
+        const prData = await prRes.json();
+        if (pData.success) setProjects(pData.data);
+        if (prData.success) setProfiles(prData.data);
+      } catch {}
+      setLoading(false);
+    };
+    load();
+  }, []);
 
   const getProfileName = (id: string) =>
     profiles.find((p) => p.id === id)?.name || "Unknown";
-
-  // getAll returns newest-first from Supabase — use directly
-  const sorted = projects;
 
   return (
     <div className="space-y-8">
@@ -45,7 +60,12 @@ export default async function ProjectsPage() {
         </Link>
       </div>
 
-      {sorted.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin mr-2" />
+          Loading projects...
+        </div>
+      ) : projects.length === 0 ? (
         <Card className="text-center py-12">
           <CardContent>
             <FolderOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
@@ -63,7 +83,7 @@ export default async function ProjectsPage() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {sorted.map((project) => (
+          {projects.map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`}>
               <Card className="hover:border-primary/50 transition-colors cursor-pointer">
                 <CardContent className="flex items-center justify-between">

@@ -40,6 +40,7 @@ export default function ProjectDetailPage() {
   const [assemblyStatus, setAssemblyStatus] = useState<string | null>(null);
   const assemblyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
+  const gateShownRef = useRef(false); // prevent gate re-triggering when continueFromResearchGate calls runAllSteps
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [auditResult, setAuditResult] = useState<Record<string, any> | null>(null);
   const [auditing, setAuditing] = useState(false);
@@ -225,6 +226,8 @@ export default function ProjectDetailPage() {
     setRunning(true);
     setError(null);
     abortRef.current = false;
+    // Only reset gate flag on a fresh pipeline kick-off, not when called from continueFromResearchGate
+    // (continueFromResearchGate sets gateShownRef=true before calling us, so we don't reset here)
 
     let freshSteps: StepResult[] = [];
     try {
@@ -235,6 +238,22 @@ export default function ProjectDetailPage() {
 
     for (const step of STEPS) {
       if (abortRef.current) break;
+
+      // Research review gate: pause before script_writing so user can add production notes.
+      // Fires whether topic_research was just run OR was already completed (e.g. follow-up videos
+      // where a topic was selected from the topic bank). gateShownRef prevents re-triggering
+      // when continueFromResearchGate calls runAllSteps() again.
+      if (step.id === "script_writing" && !gateShownRef.current) {
+        const scriptDone = freshSteps.find(s => s.step === "script_writing")?.status === "completed";
+        if (!scriptDone) {
+          gateShownRef.current = true;
+          setCurrentStep(null);
+          setRunning(false);
+          setResearchGate(true);
+          return; // resume via continueFromResearchGate
+        }
+      }
+
       const existing = freshSteps.find(s => s.step === step.id);
       if (existing?.status === "completed" || existing?.status === "skipped") continue;
 
@@ -246,14 +265,6 @@ export default function ProjectDetailPage() {
         const d = await res.json();
         if (d.success) freshSteps = d.data;
       } catch {}
-
-      // Research review gate: pause after topic_research before script_writing
-      if (step.id === "topic_research") {
-        setCurrentStep(null);
-        setRunning(false);
-        setResearchGate(true);
-        return; // resume via continueFromResearchGate
-      }
     }
 
     setCurrentStep(null);
