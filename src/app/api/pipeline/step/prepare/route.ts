@@ -240,6 +240,8 @@ export async function POST(request: Request) {
         // Strip all non-spoken content — visual tags, scene markers, act headers,
         // WORD COUNT VERIFICATION, PRODUCTION NOTES, NARRATION (V.O.): prefixes, etc.
         const narration = extractNarration(scriptText);
+        console.log(`[prepare] voiceover_generation: raw script ${scriptText.length} chars → extracted narration ${narration.length} chars`);
+        console.log(`[prepare] voiceover_generation: narration preview: ${narration.slice(0, 200).replace(/\n/g, "↵")}`);
 
         if (narration.length > 0) {
           try {

@@ -11,25 +11,30 @@ export function extractNarration(script: string): string {
     // ── Remove trailing metadata blocks ──────────────────────────────────
     // WORD COUNT VERIFICATION block and everything after it
     .replace(/\n*WORD COUNT VERIFICATION[\s\S]*/i, "")
-    // PRODUCTION NOTES block (up to next section)
-    .replace(/PRODUCTION NOTES[\s\S]*?(?=\nVISUAL TAG BUDGET|\nACT ONE|\n\[SCENE)/i, "")
-    // VISUAL TAG BUDGET block (up to next section)
-    .replace(/VISUAL TAG BUDGET[\s\S]*?(?=\nACT ONE|\n\[SCENE)/i, "")
+    // PRODUCTION NOTES block — lookahead with fallback to end-of-string
+    .replace(/PRODUCTION NOTES:?[\s\S]*?(?=\nVISUAL TAG BUDGET|\nACT ONE|\nACT TWO|\nACT THREE|\n\[SCENE|$)/i, "")
+    // VISUAL TAG BUDGET block — lookahead with fallback to end-of-string
+    .replace(/VISUAL TAG BUDGET:?[\s\S]*?(?=\nACT ONE|\nACT TWO|\nACT THREE|\n\[SCENE|$)/i, "")
     // Metadata header lines (Topic:, Channel:, Runtime:, Word target:, Format:)
     .replace(/^(Topic|Channel|Runtime target|Word target|Format)\s*:.*$/gim, "")
 
-    // ── Remove visual tags ────────────────────────────────────────────────
-    // Inline bracketed tags: [DALLE: ...], [RUNWAY: ...], [STOCK: ...], [MOTION_GRAPHIC: ...], [VISUAL CUE: ...]
-    // Handle both single-line and (rare) multi-line tag content
+    // ── Remove visual tags (bracketed) ────────────────────────────────────
+    // [DALLE: ...], [RUNWAY: ...], [STOCK: ...], [MOTION_GRAPHIC: ...], [VISUAL CUE: ...]
     .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL[\s_]CUE)[:\s][^\]]*\]/gi, "")
+    // [DELIVERY: ...], [DELIVERY NOTE: ...], [NOTE: ...]
+    .replace(/\[(DELIVERY NOTE?|NOTE)[:\s][^\]]*\]/gi, "")
 
     // ── Remove scene / act structure markers ─────────────────────────────
-    // [SCENE N -- DESCRIPTIVE TITLE] on its own line
-    .replace(/^\[SCENE\s+\d+[^\]]*\]\s*$/gim, "")
+    // [SCENE N -- TITLE] or [SCENE HOOK -- TITLE] (digits OR word after SCENE)
+    .replace(/^\[SCENE[^\]]*\]\s*$/gim, "")
     // ACT ONE: / ACT TWO: / ACT THREE: lines
     .replace(/^ACT (ONE|TWO|THREE)\s*:.*$/gim, "")
-    // NARRATION (V.O.): prefix
+    // NARRATION (V.O.): prefix (with or without colon/space variants)
     .replace(/^NARRATION\s*\(V\.O\.\)\s*:?\s*/gim, "")
+    // Standalone VISUAL CUE: lines (not bracketed)
+    .replace(/^VISUAL CUE\s*:.*$/gim, "")
+    // Standalone DELIVERY: or DELIVERY NOTE: lines
+    .replace(/^DELIVERY( NOTE)?\s*:.*$/gim, "")
 
     // ── Remove markdown formatting ────────────────────────────────────────
     // Heading lines (## Section Title)
