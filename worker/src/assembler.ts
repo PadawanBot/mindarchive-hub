@@ -20,6 +20,7 @@ import {
   createPortraitVersion,
 } from "./scene-handlers";
 import { buildFfmpegArgs } from "./filter-graph";
+import { renderMotionGraphicFromSpec } from "./motion-graphic-renderer";
 
 // ═══════════════════════════════════════════════════════════════
 // V1 Legacy types & assembler (kept for backward compatibility)
@@ -579,6 +580,9 @@ export async function assembleVideoV2(
 
     // 2c. Prepare scene clips
     const clipPaths: { path: string; duration: number; transitionOut: string }[] = [];
+    // Track generated motion-graphic PNGs (sceneIndex → local path) so the
+    // duration-extension step can re-render from the same source if needed.
+    const mgGeneratedPngs = new Map<number, string>();
 
     // Brand intro is always the first clip
     clipPaths.push({
@@ -597,8 +601,27 @@ export async function assembleVideoV2(
 
       sceneTasks.push(async () => {
         try {
-          if (!assetPath) {
-            // No asset — black fallback
+          if (scene.type === "MOTION_GRAPHIC") {
+            // MOTION_GRAPHIC: generate PNG from spec if no pre-uploaded imageUrl,
+            // then convert to a video clip with Ken Burns + fade.
+            let mgPngPath = assetPath;
+            if (!mgPngPath) {
+              const specString = (scene as { motionGraphicSpec?: string }).motionGraphicSpec;
+              const generatedPng = path.join(workDir, `mg-generated-${idx}.png`);
+              if (specString) {
+                console.log(`[v2] Scene ${idx}: generating MOTION_GRAPHIC from spec`);
+                await renderMotionGraphicFromSpec(specString, generatedPng, scene.label);
+              } else {
+                // No spec — generate a plain title card using the scene label
+                console.warn(`[v2] Scene ${idx}: MOTION_GRAPHIC has no spec, using label "${scene.label}"`);
+                await renderMotionGraphicFromSpec("", generatedPng, scene.label);
+              }
+              mgGeneratedPngs.set(idx, generatedPng);
+              mgPngPath = generatedPng;
+            }
+            await prepareMotionGraphicScene(mgPngPath, clipPath, duration, landscape, fps, preset, crf);
+          } else if (!assetPath) {
+            // No asset for non-MG scene — black fallback
             console.warn(`[v2] Scene ${idx}: no asset, using black fallback`);
             await prepareEndCard(clipPath, duration, landscape, fps, preset, crf);
           } else {
@@ -619,18 +642,6 @@ export async function assembleVideoV2(
               case "STOCK":
               case "RUNWAY":
                 await prepareVideoScene(
-                  assetPath,
-                  clipPath,
-                  duration,
-                  landscape,
-                  fps,
-                  preset,
-                  crf
-                );
-                break;
-
-              case "MOTION_GRAPHIC":
-                await prepareMotionGraphicScene(
                   assetPath,
                   clipPath,
                   duration,
@@ -661,6 +672,36 @@ export async function assembleVideoV2(
     // Sort clipPaths by filename to maintain scene order
     // (brand intro is already first, scene clips follow by padded index)
     clipPaths.sort((a, b) => a.path.localeCompare(b.path));
+
+    // ── Duration gap check: extend last clip to fill any shortfall ──
+    // Timing rounding across many scenes can leave the total video shorter
+    // than the audio. The last scene (always the end card) is a static frame
+    // so re-rendering it with extra duration is cheap and seamless.
+    const totalVideoDuration = clipPaths.reduce((sum, c) => sum + c.duration, 0);
+    const expectedDuration = brandIntroDuration + audioDuration;
+    const gap = expectedDuration - totalVideoDuration;
+
+    if (gap > 0.5) {
+      console.warn(`[v2] Job ${jobId}: video ${totalVideoDuration.toFixed(2)}s is ${gap.toFixed(2)}s shorter than audio ${expectedDuration.toFixed(2)}s — extending last scene clip`);
+      const lastClip = clipPaths[clipPaths.length - 1];
+      const extendedDuration = lastClip.duration + gap;
+
+      const lastScene = manifest.scenes[manifest.scenes.length - 1];
+      const lastSceneIdx = lastScene.sceneIndex;
+      const lastAssetPath = assetPaths.get(lastSceneIdx) || mgGeneratedPngs.get(lastSceneIdx);
+
+      if (lastAssetPath) {
+        await prepareMotionGraphicScene(lastAssetPath, lastClip.path, extendedDuration, landscape, fps, preset, crf);
+      } else {
+        // No PNG source — re-generate from spec or use end card
+        const specString = (lastScene as { motionGraphicSpec?: string }).motionGraphicSpec;
+        const tmpPng = path.join(workDir, `mg-extend-last.png`);
+        await renderMotionGraphicFromSpec(specString || "", tmpPng, lastScene.label);
+        await prepareMotionGraphicScene(tmpPng, lastClip.path, extendedDuration, landscape, fps, preset, crf);
+      }
+      lastClip.duration = extendedDuration;
+      console.log(`[v2] Job ${jobId}: last clip extended to ${extendedDuration.toFixed(2)}s — total now ${(totalVideoDuration + gap).toFixed(2)}s`);
+    }
 
     onProgress(60);
 

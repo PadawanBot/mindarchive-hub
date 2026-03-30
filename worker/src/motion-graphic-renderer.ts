@@ -137,3 +137,72 @@ export async function renderMotionGraphic(
     throw new Error(`[motion-graphic] ffmpeg failed: ${msg}\n${stderr}`);
   }
 }
+
+/**
+ * Parse a pipe-delimited spec string from the manifest into a MotionGraphicSpec.
+ *
+ * Spec format (from manifest-builder):
+ *   layout=title_card | text="TITLE / Subtitle" | white #F0F0F4 on near-black #0D0D14 | accent teal #1ABC9C
+ *   layout=list_card  | title="THE BITE MODEL"  | items="Item 1 | Item 2 | Item 3" | accent teal #1ABC9C
+ *   layout=end_card   | text="Subscribe | MindArchive" | accent teal #1ABC9C
+ */
+function parseMotionGraphicSpec(specString: string, fallbackLabel?: string): MotionGraphicSpec {
+  const spec: MotionGraphicSpec = {};
+
+  // layout=
+  const layoutMatch = specString.match(/layout=(\w+)/);
+  const layout = layoutMatch?.[1] || "title_card";
+
+  // text="..." — main text, may contain " | " inside quotes
+  const textMatch = specString.match(/\btext="([^"]+)"/);
+  if (textMatch) {
+    const parts = textMatch[1].split(" / ");
+    spec.title = parts[0].trim();
+    if (parts[1]) spec.body = parts[1].trim();
+  }
+
+  // title="..." — explicit title for list/checklist cards
+  const titleMatch = specString.match(/\btitle="([^"]+)"/);
+  if (titleMatch) spec.title = titleMatch[1];
+
+  // items="A | B | C" — bullet points
+  const itemsMatch = specString.match(/\bitems="([^"]+)"/);
+  if (itemsMatch) {
+    spec.bullets = itemsMatch[1].split("|").map((s) => s.trim()).filter(Boolean);
+  }
+
+  // accent X #RRGGBB
+  const accentMatch = specString.match(/accent\s+\w+\s+(#[0-9a-fA-F]{6})/i);
+  if (accentMatch) spec.accentColor = accentMatch[1];
+
+  // near-black #RRGGBB → background
+  const bgMatch = specString.match(/near-black\s+(#[0-9a-fA-F]{6})/i);
+  if (bgMatch) spec.backgroundColor = bgMatch[1];
+
+  // For end cards, treat title as footer (large centred subscription prompt)
+  if (layout === "end_card" && spec.title) {
+    spec.footer = spec.title;
+    spec.title = undefined;
+    spec.body = undefined;
+  }
+
+  // Fallback: nothing parsed — use scene label as plain title card
+  if (!spec.title && !spec.body && !spec.bullets?.length && !spec.footer) {
+    spec.title = fallbackLabel || "MindArchive";
+  }
+
+  return spec;
+}
+
+/**
+ * Generate a motion graphic PNG from a pipe-delimited spec string.
+ * Called by the assembler for MOTION_GRAPHIC scenes with no pre-uploaded imageUrl.
+ */
+export async function renderMotionGraphicFromSpec(
+  specString: string,
+  outputPath: string,
+  fallbackLabel?: string
+): Promise<void> {
+  const spec = parseMotionGraphicSpec(specString, fallbackLabel);
+  await renderMotionGraphic(spec, outputPath);
+}
