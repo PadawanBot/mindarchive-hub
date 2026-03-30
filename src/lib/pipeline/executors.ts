@@ -754,14 +754,30 @@ const hero_scenes: StepExecutor = async (ctx) => {
     prevScenes.filter(s => s.status === "completed" && s.video_url).map(s => [s.scene_id, s])
   );
 
-  // Also check legacy format — match by prompt text
+  // Also check legacy format — match by scene_id, prompt text, section label, or position
   if (completedMap.size === 0 && prevScenes.length > 0) {
-    const legacyScenes = prevScenes as unknown as { section?: string; promptText?: string; video_url?: string; taskId?: string }[];
-    for (const scene of allScenes) {
-      const match = legacyScenes.find(ls => ls.video_url && ls.promptText?.trim() === scene.prompt.trim());
-      if (match) {
-        completedMap.set(scene.scene_id, { ...scene, status: "completed", video_url: match.video_url!, task_id: match.taskId || null });
+    const legacyScenes = prevScenes as unknown as { scene_id?: number; section?: string; label?: string; promptText?: string; prompt?: string; video_url?: string; taskId?: string }[];
+    for (const ls of legacyScenes) {
+      if (ls.video_url && ls.scene_id != null) {
+        const scene = allScenes.find(s => s.scene_id === ls.scene_id);
+        if (scene) completedMap.set(scene.scene_id, { ...scene, status: "completed", video_url: ls.video_url, task_id: ls.taskId || null });
       }
+    }
+    for (const scene of allScenes) {
+      if (completedMap.has(scene.scene_id)) continue;
+      const match = legacyScenes.find(ls => ls.video_url && (
+        (ls.promptText?.trim() === scene.prompt.trim()) ||
+        (ls.prompt?.trim() === scene.prompt.trim()) ||
+        (ls.section?.trim() === scene.label.trim()) ||
+        (ls.label?.trim() === scene.label.trim())
+      ));
+      if (match) completedMap.set(scene.scene_id, { ...scene, status: "completed", video_url: match.video_url!, task_id: match.taskId || null });
+    }
+    // Position-based fallback for manual uploads without metadata
+    const unmatchedScenes = allScenes.filter(s => !completedMap.has(s.scene_id));
+    const unmatchedLegacy = legacyScenes.filter(ls => ls.video_url && !Array.from(completedMap.values()).some(c => c.video_url === ls.video_url));
+    for (let i = 0; i < Math.min(unmatchedScenes.length, unmatchedLegacy.length); i++) {
+      completedMap.set(unmatchedScenes[i].scene_id, { ...unmatchedScenes[i], status: "completed", video_url: unmatchedLegacy[i].video_url!, task_id: unmatchedLegacy[i].taskId || null });
     }
   }
 
