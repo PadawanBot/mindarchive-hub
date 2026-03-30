@@ -68,7 +68,8 @@ export type PipelineStep =
   | "retention_structure"
   | "comment_magnet"
   | "upload_blueprint"
-  // Production (steps 14-19)
+  // Production (steps 14-21)
+  | "narration_review"
   | "voiceover_generation"
   | "image_generation"
   | "stock_footage"

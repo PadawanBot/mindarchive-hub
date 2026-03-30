@@ -1001,6 +1001,13 @@ const hero_scenes: StepExecutor = async (ctx) => {
   };
 };
 
+// ─── Narration Review executor (handled entirely in prepare route) ───
+
+const narration_review: StepExecutor = async (_ctx) => {
+  // Computed and saved in prepare/route.ts — this executor is never called directly
+  return { output: { status: "skipped", reason: "Handled in prepare step" }, cost_cents: 0 };
+};
+
 // ─── Thumbnail Generation executor (worker-routed via prepare route) ───
 
 const thumbnail_generation: StepExecutor = async (_ctx) => {
@@ -1024,6 +1031,7 @@ export const executors: Record<PipelineStep, StepExecutor> = {
   retention_structure,
   comment_magnet,
   upload_blueprint,
+  narration_review,
   voiceover_generation,
   image_generation,
   motion_graphics,

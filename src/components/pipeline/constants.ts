@@ -22,13 +22,14 @@ export const STEPS: StepDef[] = [
   { id: "retention_structure", label: "Retention Structure", phase: "pre_production", order: 11 },
   { id: "comment_magnet", label: "Comment Magnet", phase: "pre_production", order: 12 },
   { id: "upload_blueprint", label: "Upload Blueprint", phase: "pre_production", order: 13 },
-  { id: "voiceover_generation", label: "Voiceover Generation", phase: "production", order: 14 },
-  { id: "image_generation", label: "Image Generation", phase: "production", order: 15 },
-  { id: "motion_graphics", label: "Motion Graphics", phase: "production", order: 16 },
-  { id: "motion_graphic_cards", label: "Motion Graphic Cards", phase: "production", order: 17 },
-  { id: "stock_footage", label: "Stock Footage", phase: "production", order: 18 },
-  { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 19 },
-  { id: "thumbnail_generation", label: "Thumbnail Generation", phase: "production", order: 20 },
+  { id: "narration_review", label: "Narration Review", phase: "production", order: 14 },
+  { id: "voiceover_generation", label: "Voiceover Generation", phase: "production", order: 15 },
+  { id: "image_generation", label: "Image Generation", phase: "production", order: 16 },
+  { id: "motion_graphics", label: "Motion Graphics", phase: "production", order: 17 },
+  { id: "motion_graphic_cards", label: "Motion Graphic Cards", phase: "production", order: 18 },
+  { id: "stock_footage", label: "Stock Footage", phase: "production", order: 19 },
+  { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 20 },
+  { id: "thumbnail_generation", label: "Thumbnail Generation", phase: "production", order: 21 },
 ];
 
 export const PRE_PROD_STEPS = STEPS.filter(s => s.phase === "pre_production");
@@ -49,6 +50,7 @@ export const OUTPUT_LABELS: Record<string, string> = {
   retention: "Retention Structure",
   engagement: "Comment Magnets",
   upload: "Upload Blueprint",
+  narration: "Narration",
   motion_specs: "Motion Graphics",
   motion_graphic_cards: "Motion Graphic Cards",
 };

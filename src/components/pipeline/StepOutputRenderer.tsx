@@ -29,8 +29,23 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
     <div>
       <h3 className="text-sm font-semibold text-muted-foreground mb-2">{label}</h3>
 
-      {/* Image Generation — scene panel (new) or flat gallery (legacy) */}
-      {step === "image_generation" && output?.scenes && Array.isArray(output.scenes) ? (
+      {/* Narration Review — extracted text ready for ElevenLabs */}
+      {step === "narration_review" && output?.narration ? (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span>Raw script: <strong className="text-foreground">{(output.raw_script_chars as number)?.toLocaleString()} chars</strong></span>
+            <span>→ Narration: <strong className="text-green-400">{(output.narration_chars as number)?.toLocaleString()} chars</strong></span>
+            <span>· <strong className="text-foreground">{(output.word_count as number)?.toLocaleString()} words</strong></span>
+            <span>· ~<strong className="text-foreground">{output.estimated_minutes as number} min</strong></span>
+          </div>
+          <pre className="text-xs bg-muted/50 border border-muted-foreground/10 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+            {output.narration as string}
+          </pre>
+        </div>
+      ) : step === "narration_review" ? (
+        <TextOutput text={text} />
+      ) : /* Image Generation — scene panel (new) or flat gallery (legacy) */
+      step === "image_generation" && output?.scenes && Array.isArray(output.scenes) ? (
         <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
       ) : step === "image_generation" ? (
         <ImageGallery output={output} projectId={projectId} />

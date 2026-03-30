@@ -218,6 +218,41 @@ export async function POST(request: Request) {
         }
       }
 
+      // narration_review — compute and save the extracted narration text (no LLM, no worker)
+      if (step === "narration_review") {
+        const refinedStep = existingSteps.find(s => s.step === "script_refinement");
+        const scriptStep = existingSteps.find(s => s.step === "script_writing");
+        const rawScript = (refinedStep?.output as { refined_script?: string })?.refined_script
+          || (scriptStep?.output as { script?: string })?.script || "";
+
+        if (!rawScript) {
+          return NextResponse.json({ success: false, error: "No script found — run script_refinement first" }, { status: 400 });
+        }
+
+        const narration = extractNarration(rawScript);
+        const wordCount = narration.split(/\s+/).filter(Boolean).length;
+        const estimatedMinutes = Math.round((wordCount / 150) * 10) / 10;
+
+        await upsertStep(project_id, "narration_review", {
+          status: "completed",
+          output: {
+            narration,
+            word_count: wordCount,
+            estimated_minutes: estimatedMinutes,
+            narration_chars: narration.length,
+            raw_script_chars: rawScript.length,
+            source: refinedStep ? "script_refinement" : "script_writing",
+          },
+          cost_cents: 0,
+        });
+
+        console.log(`[prepare] narration_review: ${rawScript.length} chars → ${narration.length} chars narration, ${wordCount} words, ~${estimatedMinutes}min`);
+        return NextResponse.json({
+          success: true,
+          data: { needs_llm: false, already_complete: true, step, project_id },
+        });
+      }
+
       // Route voiceover_generation to EC2 worker (ElevenLabs streaming exceeds Vercel 60s timeout)
       if (step === "voiceover_generation" && workerUrl) {
         const elevenLabsKey = settings.elevenlabs_key;
@@ -231,17 +266,18 @@ export async function POST(request: Request) {
 
         const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
 
-        // Extract narration text from refined or raw script
-        const refinedStep = existingSteps.find(s => s.step === "script_refinement");
-        const scriptStep = existingSteps.find(s => s.step === "script_writing");
-        const scriptText = (refinedStep?.output as { refined_script?: string })?.refined_script
-          || (scriptStep?.output as { script?: string })?.script || "";
+        // Read narration from narration_review step — the single source of truth
+        const narrationStep = existingSteps.find(s => s.step === "narration_review");
+        const narration = (narrationStep?.output as { narration?: string })?.narration || (() => {
+          // Fallback: re-extract (handles projects run before narration_review step existed)
+          const refinedStep = existingSteps.find(s => s.step === "script_refinement");
+          const scriptStep = existingSteps.find(s => s.step === "script_writing");
+          const scriptText = (refinedStep?.output as { refined_script?: string })?.refined_script
+            || (scriptStep?.output as { script?: string })?.script || "";
+          return extractNarration(scriptText);
+        })();
 
-        // Strip all non-spoken content — visual tags, scene markers, act headers,
-        // WORD COUNT VERIFICATION, PRODUCTION NOTES, NARRATION (V.O.): prefixes, etc.
-        const narration = extractNarration(scriptText);
-        console.log(`[prepare] voiceover_generation: raw script ${scriptText.length} chars → extracted narration ${narration.length} chars`);
-        console.log(`[prepare] voiceover_generation: narration preview: ${narration.slice(0, 200).replace(/\n/g, "↵")}`);
+        console.log(`[prepare] voiceover_generation: sending ${narration.length} chars to worker (from ${narrationStep ? "narration_review" : "fallback extraction"})`);
 
         if (narration.length > 0) {
           try {
