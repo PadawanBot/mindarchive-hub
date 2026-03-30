@@ -592,7 +592,7 @@ export default function ProjectDetailPage() {
     if (existingStepIds.has(assetStepId)) continue;
     const def = STEPS.find(d => d.id === assetStepId);
     if (def && def.order <= maxCompletedOrder) {
-      completedOutputs.push({ step: assetStepId as PipelineStep, label: def.label, text: "", order: def.order });
+      completedOutputs.push({ step: def.id, label: def.label, text: "", order: def.order });
     }
   }
 
