@@ -1,4 +1,4 @@
-import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage, SceneVideo } from "@/types";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage, SceneImageStatus, SceneVideo } from "@/types";
 import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
 import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
@@ -712,10 +712,32 @@ const motion_graphics: StepExecutor = async (ctx) => {
   const timing = (getPrevOutput(ctx.previousSteps, "timing_sync") as { timing?: string })?.timing || "";
   const brand = (getPrevOutput(ctx.previousSteps, "brand_assets") as { brand?: string })?.brand || "";
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
+  const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
+
+  // Extract MOTION_GRAPHIC scenes for card spec generation
+  let mgScenesContext = "";
+  if (visuals) {
+    try {
+      let parsed = JSON.parse(visuals.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
+      if (!Array.isArray(parsed)) {
+        for (const k of ["scenes", "data", "entries"]) {
+          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+        }
+      }
+      if (Array.isArray(parsed)) {
+        const mgScenes = parsed.filter((s: Record<string, unknown>) =>
+          String(s.tag_type || "").toUpperCase() === "MOTION_GRAPHIC"
+        );
+        if (mgScenes.length > 0) {
+          mgScenesContext = `\n\nMOTION_GRAPHIC scenes requiring card specs:\n${JSON.stringify(mgScenes, null, 2)}`;
+        }
+      }
+    } catch { /* visual direction not parseable — skip */ }
+  }
 
   const result = await callLLM(ctx,
-    "You are a motion graphics designer for faceless YouTube videos. Generate structured JSON motion graphic specs that an ffmpeg/Pillow rendering pipeline can consume. Output as JSON with fields: lower_thirds (array of {text, x, y, font_size, color, bg_color, start_time_seconds, end_time_seconds, animation}), title_cards (array of {text, style, duration_seconds, position}), transitions (array of {type, timestamp_seconds, duration_ms}), overlays (array of {type, text, position, start_time, end_time, style}).",
-    `Generate motion graphic specs for this video production.\n\nTiming data:\n${timing.slice(0, 2000)}\n\nBrand assets:\n${brand.slice(0, 1500)}\n\nRefined script excerpt:\n${script.slice(0, 2000)}`
+    `You are a motion graphics director for faceless YouTube videos. Generate structured JSON with exactly two top-level keys:\n1. "lower_thirds": array of {text, start_time_seconds, end_time_seconds, x, y, font_size, color, bg_color} — timed text overlays synced to the voiceover\n2. "cards": array of {scene_id, layout, title, body, bullets, footer, accent_color, background_color} — one entry per MOTION_GRAPHIC scene\n\nFor each MOTION_GRAPHIC scene, generate a "cards" entry with:\n- scene_id: the scene number\n- layout: "title_card", "list_card", "checklist", or "end_card"\n- title: bold heading text\n- body: (optional) subtitle or short description\n- bullets: (optional) array of bullet point strings for list_card/checklist\n- footer: (optional) bottom-anchored text for end_card\n- accent_color: hex color string e.g. "#1ABC9C"\n- background_color: hex color string e.g. "#0D0D14"\n\nOutput pure JSON only. No markdown fences. No explanation.`,
+    `Timing data:\n${timing.slice(0, 2000)}\n\nBrand assets:\n${brand.slice(0, 1500)}\n\nRefined script excerpt:\n${script.slice(0, 2000)}${mgScenesContext}`
   );
 
   return {
@@ -727,6 +749,182 @@ const motion_graphics: StepExecutor = async (ctx) => {
     },
     cost_cents: estimateCost(ctx, result.inputTokens, result.outputTokens),
   };
+};
+
+const motion_graphic_cards: StepExecutor = async (ctx) => {
+  const workerUrl = process.env.WORKER_URL;
+  const workerSecret = process.env.WORKER_SECRET;
+  if (!workerUrl) {
+    return { output: { status: "skipped", reason: "WORKER_URL not configured" }, cost_cents: 0 };
+  }
+
+  // Get MOTION_GRAPHIC scenes from visual_direction
+  const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
+  let mgSceneList: Array<{ scene_id: number; label: string; layout: string; text_content: string; colour_scheme: Record<string, string> }> = [];
+  if (visuals) {
+    try {
+      let parsed = JSON.parse(visuals.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
+      if (!Array.isArray(parsed)) {
+        for (const k of ["scenes", "data", "entries"]) {
+          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
+        }
+      }
+      if (Array.isArray(parsed)) {
+        mgSceneList = parsed
+          .filter((s: Record<string, unknown>) => String(s.tag_type || "").toUpperCase() === "MOTION_GRAPHIC")
+          .map((s: Record<string, unknown>) => ({
+            scene_id: Number(s.scene || s.scene_id || 0),
+            label: String(s.label || s.narration || `Scene ${s.scene}`),
+            layout: String(s.layout_type || "title_card"),
+            text_content: String(s.text_content || s.narration || ""),
+            colour_scheme: (s.colour_scheme as Record<string, string>) || {},
+          }));
+      }
+    } catch { /* skip */ }
+  }
+
+  if (mgSceneList.length === 0) {
+    return { output: { status: "skipped", reason: "No MOTION_GRAPHIC scenes found in visual direction" }, cost_cents: 0 };
+  }
+
+  // Get per-card specs from motion_graphics LLM output
+  const motionSpecs = (getPrevOutput(ctx.previousSteps, "motion_graphics") as { motion_specs?: string })?.motion_specs || "";
+  const llmCardMap = new Map<number, Record<string, unknown>>();
+  if (motionSpecs) {
+    try {
+      const parsed = JSON.parse(motionSpecs.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
+      if (Array.isArray(parsed?.cards)) {
+        for (const card of parsed.cards) {
+          if (card.scene_id) llmCardMap.set(Number(card.scene_id), card);
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  // Resume: carry forward completed scenes
+  const prevOutput = getPrevOutput(ctx.previousSteps, "motion_graphic_cards") as { scenes?: SceneImage[] } | undefined;
+  const existingScenes = prevOutput?.scenes || [];
+
+  // Build full scene list, skip already completed
+  type SceneImageWithSpec = SceneImage & { _spec?: Record<string, unknown> };
+
+  const allScenes: SceneImageWithSpec[] = mgSceneList.map(s => {
+    const existing = existingScenes.find(e => e.scene_id === s.scene_id);
+    if (existing?.status === "completed" && existing.image_url) return existing;
+
+    // Build MotionGraphicSpec from LLM card + visual direction fallback
+    const spec: Record<string, unknown> = {
+      backgroundColor: "#0D0D14",
+      textColor: "#F0F0F4",
+      accentColor: "#1ABC9C",
+      fontSize: 48,
+      width: 1920,
+      height: 1080,
+    };
+
+    // Apply colour_scheme from visual direction
+    if (s.colour_scheme) {
+      for (const [k, v] of Object.entries(s.colour_scheme)) {
+        if (typeof v === "string" && v.startsWith("#")) {
+          const kl = k.toLowerCase();
+          if (kl.includes("bg") || kl.includes("background") || kl.includes("dark")) spec.backgroundColor = v;
+          else if (kl.includes("accent") || kl.includes("primary")) spec.accentColor = v;
+          else if (kl.includes("text") || kl.includes("body")) spec.textColor = v;
+        }
+      }
+    }
+
+    // Apply LLM card specs if available (higher priority)
+    const llmCard = llmCardMap.get(s.scene_id);
+    if (llmCard) {
+      if (llmCard.title) spec.title = String(llmCard.title);
+      if (llmCard.body) spec.body = String(llmCard.body);
+      if (Array.isArray(llmCard.bullets)) spec.bullets = llmCard.bullets.map(String);
+      if (llmCard.footer) spec.footer = String(llmCard.footer);
+      if (llmCard.accent_color) spec.accentColor = String(llmCard.accent_color);
+      if (llmCard.background_color) spec.backgroundColor = String(llmCard.background_color);
+    } else {
+      // Fallback: use text_content from visual direction
+      const parts = s.text_content.split(" / ");
+      if (s.layout === "end_card") {
+        spec.footer = parts[0] || "Subscribe for more";
+      } else {
+        spec.title = parts[0];
+        if (parts[1]) spec.body = parts[1];
+      }
+    }
+
+    // Build a prompt string summarising the spec (shown in the UI)
+    const promptParts = [
+      `layout=${s.layout}`,
+      spec.title ? `title="${spec.title}"` : null,
+      spec.body ? `body="${spec.body}"` : null,
+      Array.isArray(spec.bullets) && (spec.bullets as string[]).length > 0 ? `bullets=${(spec.bullets as string[]).length}` : null,
+      `accent=${String(spec.accentColor)}`,
+    ].filter(Boolean).join(" | ");
+
+    return {
+      scene_id: s.scene_id,
+      label: s.label,
+      prompt: promptParts,
+      image_url: null,
+      revised_prompt: null,
+      status: "pending" as SceneImageStatus,
+      _spec: spec,
+    } as SceneImageWithSpec;
+  });
+
+  const pendingScenes = allScenes.filter(s => s.status !== "completed");
+
+  if (pendingScenes.length === 0) {
+    return { output: { scenes: allScenes.map(({ _spec: _removed, ...clean }) => { void _removed; return clean as SceneImage; }) }, cost_cents: 0 };
+  }
+
+  // Render all pending scenes in parallel via worker
+  const renderResults = await Promise.all(
+    pendingScenes.map(async (scene) => {
+      try {
+        const specToSend = scene._spec || { title: scene.label };
+        const res = await fetch(`${workerUrl}/render-motion-graphic`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(workerSecret ? { Authorization: `Bearer ${workerSecret}` } : {}),
+          },
+          body: JSON.stringify({
+            spec: specToSend,
+            projectId: ctx.project.id,
+            sceneIndex: scene.scene_id,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const data = await res.json() as { success?: boolean; url?: string; error?: string };
+        if (data.success && data.url) {
+          const { _spec: _removed, ...clean } = scene;
+          void _removed;
+          return { ...clean, image_url: data.url, status: "completed" as SceneImageStatus } as SceneImage;
+        }
+        const { _spec: _removed, ...clean } = scene;
+        void _removed;
+        return { ...clean, status: "failed" as SceneImageStatus, error: data.error || "Worker error" } as SceneImage;
+      } catch (err) {
+        const { _spec: _removed, ...clean } = scene;
+        void _removed;
+        return { ...clean, status: "failed" as SceneImageStatus, error: String(err) } as SceneImage;
+      }
+    })
+  );
+
+  // Merge render results back into allScenes (strip internal _spec before saving)
+  const mergedScenes: SceneImage[] = allScenes.map(s => {
+    const result = renderResults.find(r => r.scene_id === s.scene_id);
+    if (result) return result;
+    const { _spec: _removed, ...clean } = s;
+    void _removed;
+    return clean as SceneImage;
+  });
+
+  return { output: { scenes: mergedScenes }, cost_cents: 0 };
 };
 
 const hero_scenes: StepExecutor = async (ctx) => {
@@ -840,7 +1038,8 @@ export const executors: Record<PipelineStep, StepExecutor> = {
   upload_blueprint,
   voiceover_generation,
   image_generation,
-  stock_footage,
   motion_graphics,
+  motion_graphic_cards,
+  stock_footage,
   hero_scenes,
 };

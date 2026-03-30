@@ -68,11 +68,12 @@ export type PipelineStep =
   | "retention_structure"
   | "comment_magnet"
   | "upload_blueprint"
-  // Production (steps 14-18)
+  // Production (steps 14-19)
   | "voiceover_generation"
   | "image_generation"
   | "stock_footage"
   | "motion_graphics"
+  | "motion_graphic_cards"
   | "hero_scenes";
 
 export type PipelinePhase = "pre_production" | "production";

@@ -260,6 +260,17 @@ export function buildManifest(
     | { motion_specs?: string }
     | undefined;
 
+  const motionGraphicCards = getOutput("motion_graphic_cards") as
+    | { scenes?: Array<{ scene_id: number; image_url: string | null }> }
+    | undefined;
+
+  // Build lookup: sceneIndex → pre-rendered PNG URL
+  const mgCardUrlMap = new Map<number, string>(
+    (motionGraphicCards?.scenes || [])
+      .filter(s => s.image_url)
+      .map(s => [s.scene_id, s.image_url!])
+  );
+
   // Parse visual direction for motion graphic specs per scene
   const visualDirection = getOutput("visual_direction") as { visuals?: string } | undefined;
   const mgSpecMap = new Map<number, string>(); // scene number → spec string
@@ -488,12 +499,13 @@ export function buildManifest(
         }
 
         case "MOTION_GRAPHIC": {
-          // Look up spec from visual direction by scene number, or from timing label
+          // Prefer pre-rendered PNG from motion_graphic_cards step; fall back to spec string
           const mgSpec = mgSpecMap.get(entry.scene) || mgSpecMap.get(sceneIndex + 1) || undefined;
+          const prerenderedUrl = mgCardUrlMap.get(entry.scene) || mgCardUrlMap.get(sceneIndex + 1) || undefined;
           scenes.push({
             ...base,
             type: "MOTION_GRAPHIC",
-            imageUrl: undefined,
+            imageUrl: prerenderedUrl || undefined,
             motionGraphicSpec: mgSpec,
           } as MotionGraphicScene);
           break;

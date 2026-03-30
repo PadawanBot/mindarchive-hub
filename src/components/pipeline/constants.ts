@@ -24,9 +24,10 @@ export const STEPS: StepDef[] = [
   { id: "upload_blueprint", label: "Upload Blueprint", phase: "pre_production", order: 13 },
   { id: "voiceover_generation", label: "Voiceover Generation", phase: "production", order: 14 },
   { id: "image_generation", label: "Image Generation", phase: "production", order: 15 },
-  { id: "stock_footage", label: "Stock Footage", phase: "production", order: 16 },
-  { id: "motion_graphics", label: "Motion Graphics", phase: "production", order: 17 },
-  { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 18 },
+  { id: "motion_graphics", label: "Motion Graphics", phase: "production", order: 16 },
+  { id: "motion_graphic_cards", label: "Motion Graphic Cards", phase: "production", order: 17 },
+  { id: "stock_footage", label: "Stock Footage", phase: "production", order: 18 },
+  { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 19 },
 ];
 
 export const PRE_PROD_STEPS = STEPS.filter(s => s.phase === "pre_production");
@@ -48,4 +49,5 @@ export const OUTPUT_LABELS: Record<string, string> = {
   engagement: "Comment Magnets",
   upload: "Upload Blueprint",
   motion_specs: "Motion Graphics",
+  motion_graphic_cards: "Motion Graphic Cards",
 };

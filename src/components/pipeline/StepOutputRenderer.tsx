@@ -34,6 +34,9 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
         <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
       ) : step === "image_generation" ? (
         <ImageGallery output={output} projectId={projectId} />
+      ) : step === "motion_graphic_cards" && output?.scenes && Array.isArray(output.scenes) ? (
+        /* Motion Graphic Cards — pre-rendered PNG cards */
+        <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
       ) : step === "voiceover_generation" && output ? (
         /* Voiceover — show audio player if URL available */
         <AudioPlayer output={output} />

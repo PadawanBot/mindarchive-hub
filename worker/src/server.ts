@@ -2,7 +2,7 @@ import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { assembleVideo, assembleVideoV2 } from "./assembler";
 import { timingFromAudioUrl } from "./timing-from-audio";
-import { renderMotionGraphic } from "./motion-graphic-renderer";
+import { renderMotionGraphic, renderMotionGraphicFromSpec } from "./motion-graphic-renderer";
 import { uploadToR2 } from "./r2-upload";
 import { v4 as uuid } from "uuid";
 import * as path from "path";
@@ -792,7 +792,13 @@ app.post("/render-motion-graphic", async (req, res) => {
   const outputPath = path.join(os.tmpdir(), `mg-${jobId}.png`);
 
   try {
-    await renderMotionGraphic(spec, outputPath);
+    if (typeof spec === "string") {
+      // pipe-delimited string — parse and render using the spec helper
+      await renderMotionGraphicFromSpec(spec, outputPath);
+    } else {
+      // MotionGraphicSpec object — render directly
+      await renderMotionGraphic(spec as import("./motion-graphic-renderer").MotionGraphicSpec, outputPath);
+    }
     const r2Key = `graphics/${projectId || "shared"}/scene-${String(sceneIndex || jobId).padStart(3, "0")}.png`;
     const publicUrl = await uploadToR2(outputPath, r2Key, "image/png");
     await fs.unlink(outputPath).catch(() => {});

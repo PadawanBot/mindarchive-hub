@@ -73,7 +73,7 @@ export async function renderMotionGraphic(
       `drawtext=text='${escapeDrawtext(spec.title)}'` +
       `:x=${marginX}:y=${y}` +
       `:fontsize=${titleSize}:fontcolor=${accentColor}` +
-      `:font=Arial`
+      `:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`
     );
     y += Math.round(titleSize * 1.6);
   }
@@ -84,7 +84,7 @@ export async function renderMotionGraphic(
       `drawtext=text='${escapeDrawtext(spec.body)}'` +
       `:x=${marginX}:y=${y}` +
       `:fontsize=${baseFontSize}:fontcolor=${textColor}` +
-      `:font=Arial`
+      `:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`
     );
     y += Math.round(baseFontSize * 1.5 * Math.ceil(spec.body.length / 60));
   }
@@ -97,7 +97,7 @@ export async function renderMotionGraphic(
         `drawtext=text='${escapeDrawtext(bulletText)}'` +
         `:x=${marginX + Math.round(baseFontSize * 0.5)}:y=${y}` +
         `:fontsize=${Math.round(baseFontSize * 0.9)}:fontcolor=${textColor}` +
-        `:font=Arial`
+        `:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`
       );
       y += Math.round(baseFontSize * 1.4);
     }
@@ -110,7 +110,7 @@ export async function renderMotionGraphic(
       `drawtext=text='${escapeDrawtext(spec.footer)}'` +
       `:x=${marginX}:y=${footerY}` +
       `:fontsize=${Math.round(baseFontSize * 0.7)}:fontcolor=${textColor}@0.7` +
-      `:font=Arial`
+      `:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`
     );
   }
 
