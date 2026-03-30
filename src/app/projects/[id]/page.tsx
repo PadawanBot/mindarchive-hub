@@ -49,6 +49,12 @@ export default function ProjectDetailPage() {
   const [researchGate, setResearchGate] = useState(false);
   const [researchNotes, setResearchNotes] = useState("");
   const [savingResearchNotes, setSavingResearchNotes] = useState(false);
+  const [voiceoverGate, setVoiceoverGate] = useState(false);
+  const [narrationPreview, setNarrationPreview] = useState<{
+    narration: string; raw_script_chars: number; narration_chars: number;
+    word_count: number; estimated_minutes: number; source: string;
+  } | null>(null);
+  const voiceoverGateShownRef = useRef(false);
 
   const loadProject = useCallback(async () => {
     try {
@@ -254,6 +260,26 @@ export default function ProjectDetailPage() {
         }
       }
 
+      // Narration review gate: pause before voiceover_generation so user can
+      // verify the exact text that will be sent to ElevenLabs.
+      if (step.id === "voiceover_generation" && !voiceoverGateShownRef.current) {
+        const voiceoverDone = freshSteps.find(s => s.step === "voiceover_generation")?.status === "completed";
+        if (!voiceoverDone) {
+          try {
+            const previewRes = await fetch(`/api/pipeline/step/narration-preview?project_id=${params.id}`);
+            const previewData = await previewRes.json();
+            if (previewData.success) {
+              voiceoverGateShownRef.current = true;
+              setNarrationPreview(previewData.data);
+              setCurrentStep(null);
+              setRunning(false);
+              setVoiceoverGate(true);
+              return; // resume via continueFromVoiceoverGate
+            }
+          } catch {}
+        }
+      }
+
       const existing = freshSteps.find(s => s.step === step.id);
       if (existing?.status === "completed" || existing?.status === "skipped") continue;
 
@@ -292,6 +318,13 @@ export default function ProjectDetailPage() {
     setResearchGate(false);
     setResearchNotes("");
     // Resume pipeline from script_writing onwards
+    runAllSteps();
+  };
+
+  const continueFromVoiceoverGate = () => {
+    setVoiceoverGate(false);
+    setNarrationPreview(null);
+    // runAllSteps will skip voiceover_generation gate now (voiceoverGateShownRef=true)
     runAllSteps();
   };
 
@@ -722,6 +755,43 @@ export default function ProjectDetailPage() {
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setResearchGate(false)} disabled={savingResearchNotes}>
                 Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Narration review gate — shown before voiceover_generation */}
+      {voiceoverGate && narrationPreview && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardTitle className="flex items-center gap-2 text-base text-amber-300">
+            <AlertCircle className="h-4 w-4" />
+            Review Narration Before Voiceover Generation
+          </CardTitle>
+          <CardContent className="space-y-3 mt-2">
+            <div className="flex gap-4 text-xs text-muted-foreground">
+              <span>Raw script: <strong className="text-foreground">{narrationPreview.raw_script_chars.toLocaleString()} chars</strong></span>
+              <span>→</span>
+              <span>Narration to send: <strong className="text-amber-300">{narrationPreview.narration_chars.toLocaleString()} chars</strong></span>
+              <span>·</span>
+              <span><strong className="text-foreground">{narrationPreview.word_count.toLocaleString()} words</strong></span>
+              <span>·</span>
+              <span>~<strong className="text-foreground">{narrationPreview.estimated_minutes} min</strong> estimated</span>
+              <span>·</span>
+              <span className="opacity-60">source: {narrationPreview.source}</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              This is the exact text that will be sent to ElevenLabs. Read it carefully — visual tags, scene markers, and production notes should all be stripped. If anything looks wrong, do not continue.
+            </p>
+            <pre className="text-xs bg-muted/50 border border-muted-foreground/10 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+              {narrationPreview.narration}
+            </pre>
+            <div className="flex gap-2">
+              <Button onClick={continueFromVoiceoverGate}>
+                <Play className="h-4 w-4 mr-2" /> Looks good — Generate Voiceover
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => { setVoiceoverGate(false); voiceoverGateShownRef.current = false; }}>
+                Cancel
               </Button>
             </div>
           </CardContent>
