@@ -149,10 +149,24 @@ export async function POST(request: Request) {
 
         // Resume: check existing step output for completed scenes
         const imageStep = existingSteps.find(s => s.step === "image_generation");
-        const existingScenes = (imageStep?.output as { scenes?: SceneImage[] })?.scenes || [];
+        const imageOutput = imageStep?.output as { scenes?: SceneImage[]; images?: { url: string; prompt: string; revised_prompt?: string }[] } | undefined;
+        const existingScenes = imageOutput?.scenes || [];
         const completedMap = new Map(
           existingScenes.filter(s => s.status === "completed" && s.image_url).map(s => [s.scene_id, s])
         );
+
+        // Also check legacy images[] — match by prompt text to recover completed scenes
+        if (completedMap.size === 0 && imageOutput?.images?.length) {
+          const legacyImages = imageOutput.images;
+          for (const scene of allScenes) {
+            const match = legacyImages.find(img => img.prompt.trim() === scene.prompt.trim());
+            if (match) {
+              completedMap.set(scene.scene_id, {
+                ...scene, status: "completed", image_url: match.url, revised_prompt: match.revised_prompt || null,
+              });
+            }
+          }
+        }
 
         // Merge: carry forward completed scenes, mark rest as pending
         const mergedScenes: SceneImage[] = allScenes.map(scene => {

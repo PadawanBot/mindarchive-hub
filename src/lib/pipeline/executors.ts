@@ -521,11 +521,23 @@ const image_generation: StepExecutor = async (ctx) => {
   }
 
   // Resume: carry forward completed scenes from prior run
-  const prevOutput = getPrevOutput(ctx.previousSteps, "image_generation") as { scenes?: SceneImage[] } | undefined;
+  const prevOutput = getPrevOutput(ctx.previousSteps, "image_generation") as { scenes?: SceneImage[]; images?: { url: string; prompt: string; revised_prompt?: string }[] } | undefined;
   const prevScenes = prevOutput?.scenes || [];
   const completedMap = new Map(
     prevScenes.filter(s => s.status === "completed" && s.image_url).map(s => [s.scene_id, s])
   );
+
+  // Also check legacy images[] — match by prompt text
+  if (completedMap.size === 0 && prevOutput?.images?.length) {
+    for (const scene of allScenes) {
+      const match = prevOutput.images.find(img => img.prompt.trim() === scene.prompt.trim());
+      if (match) {
+        completedMap.set(scene.scene_id, {
+          ...scene, status: "completed", image_url: match.url, revised_prompt: match.revised_prompt || null,
+        });
+      }
+    }
+  }
 
   // Merge existing completed scenes
   const scenes: SceneImage[] = allScenes.map(scene => {
