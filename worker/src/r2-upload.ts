@@ -41,6 +41,7 @@ export async function uploadToR2(
       "Content-Type": contentType,
     },
     body: fileBuffer,
+    signal: AbortSignal.timeout(600_000), // 10 minutes — large videos (200-300MB) need time
   });
 
   const result = (await response.json()) as {
