@@ -561,6 +561,8 @@ export default function ProjectDetailPage() {
   // Production asset steps (image_generation, etc.) also show when they have any status,
   // so the UI can fetch assets from the DB even if the step output is incomplete.
   const ASSET_STEPS = ["image_generation", "voiceover_generation", "stock_footage", "hero_scenes"];
+  const maxCompletedOrder = Math.max(0, ...steps.filter(s => s.status === "completed").map(s => STEPS.find(d => d.id === s.step)?.order || 0));
+
   const completedOutputs = steps
     .filter(s =>
       (s.status === "completed" && s.output && Object.keys(s.output).length > 0) ||
@@ -582,8 +584,19 @@ export default function ProjectDetailPage() {
       }
       if (!mainText) mainText = s.output ? JSON.stringify(s.output, null, 2) : "";
       return { step: s.step, label, text: mainText, order: def?.order || 0 };
-    })
-    .sort((a, b) => a.order - b.order);
+    });
+
+  // Inject missing asset steps that the pipeline has passed (no DB row but assets may exist)
+  const existingStepIds = new Set(completedOutputs.map(o => o.step));
+  for (const assetStepId of ASSET_STEPS) {
+    if (existingStepIds.has(assetStepId)) continue;
+    const def = STEPS.find(d => d.id === assetStepId);
+    if (def && def.order <= maxCompletedOrder) {
+      completedOutputs.push({ step: assetStepId, label: def.label, text: "", order: def.order });
+    }
+  }
+
+  completedOutputs.sort((a, b) => a.order - b.order);
 
   return (
     <div className="space-y-6">
