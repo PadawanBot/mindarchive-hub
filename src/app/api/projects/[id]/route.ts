@@ -15,7 +15,9 @@ export async function GET(
         { status: 404 }
       );
     }
-    return NextResponse.json({ success: true, data: project });
+    return NextResponse.json({ success: true, data: project }, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: String(error) },

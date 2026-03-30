@@ -5,7 +5,9 @@ import type { Project, TopicBankItem } from "@/types";
 export async function GET() {
   try {
     const projects = await getAll<Project>("projects");
-    return NextResponse.json({ success: true, data: projects });
+    return NextResponse.json({ success: true, data: projects }, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: String(error) },
