@@ -75,10 +75,11 @@ export async function POST(request: Request) {
       ? slotName.trim()
       : `${prefix}_manual_${Date.now()}`;
 
-    // Build storage filename
+    // Build storage filename — sanitize slotKey to remove brackets/dots for storage path
     const ext = file.name.split(".").pop() || "bin";
     const safeName = sanitizeFilename(file.name);
-    const storageFilename = `${step}/${slotKey}_${safeName}`;
+    const safeSlotKey = slotKey.replace(/[\[\].]/g, "_");
+    const storageFilename = `${step}/${safeSlotKey}_${safeName}`;
 
     // Upload to Supabase Storage
     const buffer = await file.arrayBuffer();
