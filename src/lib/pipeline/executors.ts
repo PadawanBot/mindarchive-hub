@@ -1,5 +1,6 @@
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage, SceneImageStatus, SceneVideo } from "@/types";
 import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
+import { extractNarration } from "@/lib/pipeline/extract-narration";
 import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
@@ -391,29 +392,9 @@ const voiceover_generation: StepExecutor = async (ctx) => {
   if (!voiceId) return { output: { status: "skipped", reason: "No voice ID in channel profile" }, cost_cents: 0 };
 
   const script = (getPrevOutput(ctx.previousSteps, "script_refinement") as { refined_script?: string })?.refined_script || "";
-  // Strip metadata sections that must not be read aloud
-  const strippedMeta = script
-    // Remove WORD COUNT VERIFICATION block and everything after it
-    .replace(/\n*WORD COUNT VERIFICATION[\s\S]*/i, "")
-    // Remove PRODUCTION NOTES block (up to the next ALL-CAPS section or ACT line)
-    .replace(/PRODUCTION NOTES[\s\S]*?(?=\nVISUAL TAG BUDGET|\nACT ONE|\n\[SCENE)/i, "")
-    // Remove VISUAL TAG BUDGET block
-    .replace(/VISUAL TAG BUDGET[\s\S]*?(?=\nACT ONE|\n\[SCENE)/i, "")
-    // Remove METADATA HEADER lines (Topic:, Channel:, Runtime:, Word target:)
-    .replace(/^(Topic|Channel|Runtime target|Word target|Format)\s*:.*$/gim, "");
-
-  // Strip visual tags, scene markers, act headers, and formatting for voiceover
-  const narration = strippedMeta
-    .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE)[:\s][^\]]*\]/gi, "")
-    .replace(/^\[SCENE\s+\d+[^\]]*\]\s*$/gim, "")
-    .replace(/^ACT (ONE|TWO|THREE)\s*:.*$/gim, "")
-    .replace(/^NARRATION\s*\(V\.O\.\)\s*:?\s*/gim, "")
-    .replace(/^#{1,3}\s.*$/gm, "")
-    .replace(/^---+$/gm, "")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  // Strip all non-spoken content using shared utility (visual tags, scene markers,
+  // act headers, WORD COUNT VERIFICATION, PRODUCTION NOTES, NARRATION (V.O.): prefixes, etc.)
+  const narration = extractNarration(script);
 
   // Trigger ElevenLabs generation via streaming — read just the first chunk
   // to confirm it started, then let ElevenLabs finish in the background.

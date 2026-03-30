@@ -5,6 +5,7 @@ import { getStepDef, canRunStep, getNextStep } from "@/lib/pipeline/steps";
 import { deleteAssetsByStep } from "@/lib/asset-db";
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, SceneImage, SceneVideo } from "@/types";
 import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
+import { extractNarration } from "@/lib/pipeline/extract-narration";
 
 export const maxDuration = 15;
 
@@ -236,15 +237,9 @@ export async function POST(request: Request) {
         const scriptText = (refinedStep?.output as { refined_script?: string })?.refined_script
           || (scriptStep?.output as { script?: string })?.script || "";
 
-        // Strip visual tags and section headers — narration only
-        const narration = scriptText
-          .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE)[:\s][^\]]*\]/gi, "")
-          .replace(/^#{1,3}\s.*$/gm, "")
-          .replace(/^---+$/gm, "")
-          .replace(/\*\*([^*]+)\*\*/g, "$1")   // strip bold markdown
-          .replace(/\*([^*]+)\*/g, "$1")        // strip italic markdown
-          .replace(/\n{3,}/g, "\n\n")
-          .trim();
+        // Strip all non-spoken content — visual tags, scene markers, act headers,
+        // WORD COUNT VERIFICATION, PRODUCTION NOTES, NARRATION (V.O.): prefixes, etc.
+        const narration = extractNarration(scriptText);
 
         if (narration.length > 0) {
           try {
