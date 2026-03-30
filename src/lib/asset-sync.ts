@@ -61,14 +61,27 @@ function findAssets(step: string, output: Record<string, unknown>): FoundAsset[]
     found.push({ slotKey: "audio_url", url: output.audio_url });
   }
 
-  if (step === "image_generation" && Array.isArray(output.images)) {
-    output.images.forEach((img, i) => {
-      const key = `images[${i}].url`;
-      const imgObj = img as Record<string, unknown>;
-      if (typeof imgObj?.url === "string" && !seen.has(key)) {
-        found.push({ slotKey: key, url: imgObj.url as string });
-      }
-    });
+  if (step === "image_generation") {
+    // New format: scenes[] with image_url
+    if (Array.isArray(output.scenes)) {
+      output.scenes.forEach((scene, i) => {
+        const key = `scenes[${i}].image_url`;
+        const sceneObj = scene as Record<string, unknown>;
+        if (typeof sceneObj?.image_url === "string" && !seen.has(key)) {
+          found.push({ slotKey: key, url: sceneObj.image_url as string });
+        }
+      });
+    }
+    // Legacy format: images[] with url
+    if (Array.isArray(output.images)) {
+      output.images.forEach((img, i) => {
+        const key = `images[${i}].url`;
+        const imgObj = img as Record<string, unknown>;
+        if (typeof imgObj?.url === "string" && !seen.has(key)) {
+          found.push({ slotKey: key, url: imgObj.url as string });
+        }
+      });
+    }
   }
 
   if (step === "hero_scenes" && Array.isArray(output.scenes)) {

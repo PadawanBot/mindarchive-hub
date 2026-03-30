@@ -1,4 +1,5 @@
-import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources } from "@/types";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage } from "@/types";
+import { parseDalleScenes } from "@/lib/pipeline/parse-visual-scenes";
 import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
@@ -513,117 +514,73 @@ const image_generation: StepExecutor = async (ctx) => {
   if (!key) return { output: { status: "skipped", reason: "No OpenAI API key configured" }, cost_cents: 0 };
 
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
+  const allScenes = parseDalleScenes(visuals);
 
-  // Extract DALL-E prompts from visual direction output.
-  // New format: doc + "=== VISUAL DIRECTION JSON ===" + JSON array with {tag, dalle_prompt, ...}
-  // Legacy format: raw JSON array with {tag_type, prompt} or {dalle_prompt}
-  let prompts: string[] = [];
-
-  const JSON_SEPARATOR = "=== VISUAL DIRECTION JSON ===";
-  const sepIdx = visuals.indexOf(JSON_SEPARATOR);
-  // Prefer the explicit JSON section; fall back to treating the whole string as JSON
-  let jsonSource = sepIdx !== -1
-    ? visuals.slice(sepIdx + JSON_SEPARATOR.length).trim()
-    : visuals.trim();
-  // Strip markdown code fences
-  if (jsonSource.startsWith("```")) {
-    jsonSource = jsonSource.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-  }
-  try {
-    let parsed = JSON.parse(jsonSource);
-    // Handle wrapped objects
-    if (!Array.isArray(parsed) && typeof parsed === "object") {
-      for (const k of ["scenes", "data", "entries"]) {
-        if (Array.isArray((parsed as Record<string, unknown>)[k])) { parsed = (parsed as Record<string, unknown>)[k]; break; }
-      }
-    }
-    if (Array.isArray(parsed)) {
-      prompts = parsed
-        .filter((s: Record<string, unknown>) =>
-          // Gold standard format: tag + dalle_prompt
-          (s.tag === "DALLE" && typeof s.dalle_prompt === "string") ||
-          // Legacy format: tag_type + prompt
-          (s.tag_type === "DALLE" && typeof s.prompt === "string") ||
-          // Legacy format: bare dalle_prompt
-          typeof s.dalle_prompt === "string"
-        )
-        .map((s: Record<string, unknown>) =>
-          (s.tag === "DALLE" || s.tag_type === "DALLE"
-            ? (s.dalle_prompt ?? s.prompt)
-            : s.dalle_prompt) as string
-        );
-    }
-  } catch {
-    // Fallback: extract dalle_prompt values with regex from raw text
-    const matches = visuals.match(/"dalle_prompt"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
-    if (matches) prompts = matches.map(m => m.replace(/^"dalle_prompt"\s*:\s*"/, "").replace(/"$/, "")).slice(0, 15);
-  }
-
-  if (prompts.length === 0) {
+  if (allScenes.length === 0) {
     return { output: { status: "skipped", reason: "No DALL-E prompts found in visual direction" }, cost_cents: 0 };
   }
 
-  // Resume support: carry forward any images already generated in a prior run
-  type ImageEntry = { prompt: string; url: string; revised_prompt: string; stored: boolean };
-  const prevImages: ImageEntry[] =
-    (getPrevOutput(ctx.previousSteps, "image_generation") as { images?: ImageEntry[] })?.images || [];
-  const alreadyGenerated = new Set(prevImages.map(img => img.prompt.trim()));
-  const missingPrompts = prompts.filter(p => !alreadyGenerated.has(p.trim()));
+  // Resume: carry forward completed scenes from prior run
+  const prevOutput = getPrevOutput(ctx.previousSteps, "image_generation") as { scenes?: SceneImage[] } | undefined;
+  const prevScenes = prevOutput?.scenes || [];
+  const completedMap = new Map(
+    prevScenes.filter(s => s.status === "completed" && s.image_url).map(s => [s.scene_id, s])
+  );
 
-  if (missingPrompts.length === 0) {
-    // All images already exist — nothing to do
+  // Merge existing completed scenes
+  const scenes: SceneImage[] = allScenes.map(scene => {
+    const existing = completedMap.get(scene.scene_id);
+    return existing ? { ...scene, ...existing } : scene;
+  });
+  const pendingScenes = scenes.filter(s => s.status !== "completed");
+
+  if (pendingScenes.length === 0) {
     return {
-      output: { status: "completed", images: prevImages, total_prompts: prompts.length, generated: prevImages.length },
+      output: { status: "completed", scenes, images: scenes.filter(s => s.image_url).map(s => ({ url: s.image_url!, prompt: s.prompt, revised_prompt: s.revised_prompt || "", stored: true })), total_prompts: scenes.length, generated: scenes.filter(s => s.status === "completed").length },
       cost_cents: 0,
     };
   }
 
-  console.log(`[image_generation] ${prevImages.length} existing, ${missingPrompts.length} to generate`);
+  console.log(`[image_generation] ${completedMap.size} existing, ${pendingScenes.length} to generate`);
 
-  // Generate missing images in parallel batches of 5
-  // DALL-E 3 takes ~15-20s each. Batch size 5 ≈ 20s per batch
-  const maxImages = Math.min(missingPrompts.length, 15);
+  // Generate pending scenes in parallel batches of 5
+  const maxScenes = Math.min(pendingScenes.length, 15);
   const batchSize = 5;
-  const images: ImageEntry[] = [...prevImages]; // start with existing
+  let newlyGenerated = 0;
 
-  // Phase 1: Generate missing DALL-E images (parallel batches)
-  const tempImages: { prompt: string; url: string; revised_prompt: string; index: number }[] = [];
-  for (let batch = 0; batch < maxImages; batch += batchSize) {
-    const batchPrompts = missingPrompts.slice(batch, batch + batchSize);
-    const batchResults = await Promise.all(
-      batchPrompts.map(async (p, batchIdx) => {
-        const i = prevImages.length + batch + batchIdx; // global scene index for filename
+  for (let batch = 0; batch < maxScenes; batch += batchSize) {
+    const batchScenes = pendingScenes.slice(batch, batch + batchSize);
+    const results = await Promise.all(
+      batchScenes.map(async (scene) => {
         try {
-          const img = await generateImage(key, sanitizePrompt(p));
-          return { prompt: p, url: img.url, revised_prompt: img.revisedPrompt, index: i };
+          const img = await generateImage(key, sanitizePrompt(scene.prompt));
+          const storedUrl = await downloadAndStore(
+            ctx.project.id, `dalle-scene-${String(scene.scene_id).padStart(3, "0")}.png`, img.url, "image/png"
+          );
+          return { ...scene, status: "completed" as const, image_url: storedUrl || img.url, revised_prompt: img.revisedPrompt };
         } catch (err) {
-          console.error(`[image_generation] Image ${i + 1} failed:`, err);
-          return null;
+          const errMsg = String(err);
+          const isContentPolicy = errMsg.includes("content_policy") || errMsg.includes("safety");
+          console.error(`[image_generation] Scene ${scene.scene_id} ${isContentPolicy ? "rejected" : "failed"}:`, err);
+          return { ...scene, status: (isContentPolicy ? "rejected" : "failed") as SceneImage["status"], error: errMsg, image_url: null };
         }
       })
     );
-    tempImages.push(...batchResults.filter(Boolean) as typeof tempImages);
+    for (const r of results) {
+      const idx = scenes.findIndex(s => s.scene_id === r.scene_id);
+      if (idx !== -1) scenes[idx] = r;
+      if (r.status === "completed") newlyGenerated++;
+    }
   }
 
-  // Phase 2: Persist to storage (all in parallel)
-  const storeResults = await Promise.all(
-    tempImages.map(async (img) => {
-      try {
-        const storedUrl = await downloadAndStore(
-          ctx.project.id, `dalle-scene-${img.index + 1}.png`, img.url, "image/png"
-        );
-        return { prompt: img.prompt, url: storedUrl || img.url, revised_prompt: img.revised_prompt, stored: !!storedUrl };
-      } catch (err) {
-        console.error(`[image_generation] Storage failed for image ${img.index + 1}, using temp URL:`, err);
-        return { prompt: img.prompt, url: img.url, revised_prompt: img.revised_prompt, stored: false };
-      }
-    })
-  );
-  images.push(...storeResults);
+  // Build legacy images[] for backwards compat
+  const images = scenes
+    .filter(s => s.status === "completed" && s.image_url)
+    .map(s => ({ url: s.image_url!, prompt: s.prompt, revised_prompt: s.revised_prompt || "", stored: true }));
 
   return {
-    output: { status: "completed", images, total_prompts: prompts.length, generated: images.length },
-    cost_cents: images.length * 8, // ~$0.08 per DALL-E 3 HD image
+    output: { status: "completed", scenes, images, total_prompts: scenes.length, generated: images.length },
+    cost_cents: newlyGenerated * 8,
   };
 };
 

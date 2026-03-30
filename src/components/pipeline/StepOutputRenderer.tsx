@@ -4,6 +4,7 @@ import type { PipelineStep } from "@/types";
 import { AssetGrid } from "@/components/assets/AssetGrid";
 import { getSlotsForStep } from "@/lib/asset-validation";
 import { ImageGallery } from "./outputs/ImageGallery";
+import { SceneImagePanel } from "./outputs/SceneImagePanel";
 import { AudioPlayer } from "./outputs/AudioPlayer";
 import { StockFootageGrid } from "./outputs/StockFootageGrid";
 import { HeroScenesViewer } from "./outputs/HeroScenesViewer";
@@ -27,8 +28,10 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
     <div>
       <h3 className="text-sm font-semibold text-muted-foreground mb-2">{label}</h3>
 
-      {/* Image Generation — show thumbnails */}
-      {step === "image_generation" ? (
+      {/* Image Generation — scene panel (new) or flat gallery (legacy) */}
+      {step === "image_generation" && output?.scenes && Array.isArray(output.scenes) ? (
+        <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
+      ) : step === "image_generation" ? (
         <ImageGallery output={output} projectId={projectId} />
       ) : step === "voiceover_generation" && output ? (
         /* Voiceover — show audio player if URL available */

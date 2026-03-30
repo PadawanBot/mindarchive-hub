@@ -3,7 +3,8 @@ import { getById, update, getAllSettings, upsertStep, getStepsByProject } from "
 import { buildPrompt } from "@/lib/pipeline/prompts";
 import { getStepDef, canRunStep, getNextStep } from "@/lib/pipeline/steps";
 import { deleteAssetsByStep } from "@/lib/asset-db";
-import type { Project, ChannelProfile, FormatPreset, PipelineStep } from "@/types";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, SceneImage } from "@/types";
+import { parseDalleScenes } from "@/lib/pipeline/parse-visual-scenes";
 
 export const maxDuration = 15;
 
@@ -141,37 +142,34 @@ export async function POST(request: Request) {
       if (step === "image_generation" && workerUrl) {
         const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
 
-        // Extract DALL-E prompts from visual direction (same logic as executor)
+        // Extract DALL-E scenes from visual direction using shared parser
         const visualStep = existingSteps.find(s => s.step === "visual_direction");
         const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
-        let dallePrompts: string[] = [];
-        // Split on separator if present (gold standard visual direction format)
-        const separator = "=== VISUAL DIRECTION JSON ===";
-        let jsonPart = visuals.includes(separator) ? visuals.split(separator)[1] : visuals;
-        let cleaned = jsonPart.trim();
-        if (cleaned.startsWith("```")) {
-          cleaned = cleaned.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-        }
-        try {
-          const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (Array.isArray(parsed)) {
-              dallePrompts = parsed
-                .filter((s: Record<string, unknown>) =>
-                  // Gold standard: tag + dalle_prompt; Legacy: tag_type + prompt
-                  ((s.tag === "DALLE" || s.tag_type === "DALLE") &&
-                   (typeof s.dalle_prompt === "string" || typeof s.prompt === "string"))
-                )
-                .map((s: Record<string, unknown>) =>
-                  (s.dalle_prompt || s.prompt) as string
-                )
-                .slice(0, 15);
-            }
-          }
-        } catch {}
+        const allScenes = parseDalleScenes(visuals);
 
-        if (dallePrompts.length > 0) {
+        // Resume: check existing step output for completed scenes
+        const imageStep = existingSteps.find(s => s.step === "image_generation");
+        const existingScenes = (imageStep?.output as { scenes?: SceneImage[] })?.scenes || [];
+        const completedMap = new Map(
+          existingScenes.filter(s => s.status === "completed" && s.image_url).map(s => [s.scene_id, s])
+        );
+
+        // Merge: carry forward completed scenes, mark rest as pending
+        const mergedScenes: SceneImage[] = allScenes.map(scene => {
+          const existing = completedMap.get(scene.scene_id);
+          return existing ? { ...scene, ...existing } : scene;
+        });
+        const pendingScenes = mergedScenes.filter(s => s.status !== "completed");
+
+        if (allScenes.length > 0 && pendingScenes.length === 0) {
+          console.log(`[prepare] image_generation: all ${allScenes.length} scenes already completed — skipping worker`);
+          return NextResponse.json({
+            success: true,
+            data: { needs_llm: false, already_complete: true, step, project_id },
+          });
+        }
+
+        if (allScenes.length > 0) {
           try {
             const workerRes = await fetch(`${workerUrl}/generate-images`, {
               method: "POST",
@@ -181,14 +179,16 @@ export async function POST(request: Request) {
               },
               body: JSON.stringify({
                 projectId: project_id,
-                prompts: dallePrompts,
+                scenes: pendingScenes,
+                allScenes: mergedScenes,
+                prompts: pendingScenes.map(s => s.prompt), // backwards compat
                 callbackUrl,
               }),
             });
 
             if (workerRes.ok) {
               const { jobId } = await workerRes.json();
-              console.log(`[prepare] image_generation routed to worker — job ${jobId}, ${dallePrompts.length} prompts`);
+              console.log(`[prepare] image_generation routed to worker — job ${jobId}, ${pendingScenes.length} pending of ${allScenes.length} total`);
               return NextResponse.json({
                 success: true,
                 data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },

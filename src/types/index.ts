@@ -162,6 +162,20 @@ export interface TopicBankItem {
   updated_at: string;
 }
 
+// ─── Scene Image (DALL-E generation) ───
+export type SceneImageStatus = "pending" | "completed" | "failed" | "rejected";
+
+export interface SceneImage {
+  scene_id: number;
+  label: string;
+  prompt: string;
+  image_url: string | null;
+  revised_prompt: string | null;
+  status: SceneImageStatus;
+  error?: string;
+  ken_burns?: string;
+}
+
 // ─── Script ───
 export interface ScriptSection {
   id: string;

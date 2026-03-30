@@ -292,10 +292,17 @@ app.post("/assemble", async (req, res) => {
 // ── Generate DALL-E images in parallel batches → R2 ──
 
 app.post("/generate-images", async (req, res) => {
-  const { projectId, prompts, callbackUrl } = req.body;
+  const { projectId, scenes, allScenes, prompts, callbackUrl } = req.body;
 
-  if (!projectId || !prompts?.length) {
-    return res.status(400).json({ error: "Missing projectId or prompts" });
+  // Accept scenes[] (new) or prompts[] (legacy)
+  interface SceneInput { scene_id: number; label: string; prompt: string; image_url?: string | null; revised_prompt?: string | null; status?: string; error?: string; ken_burns?: string }
+  const pendingScenes: SceneInput[] = scenes || (prompts || []).map((p: string, i: number) => ({
+    scene_id: i + 1, label: "", prompt: p, image_url: null, revised_prompt: null, status: "pending",
+  }));
+  const fullScenes: SceneInput[] = allScenes || pendingScenes;
+
+  if (!projectId || pendingScenes.length === 0) {
+    return res.status(400).json({ error: "Missing projectId or scenes/prompts" });
   }
 
   const openaiKey = process.env.OPENAI_API_KEY;
@@ -304,24 +311,23 @@ app.post("/generate-images", async (req, res) => {
   }
 
   const jobId = uuid();
-  console.log(`[images] Job ${jobId}: ${prompts.length} DALL-E prompts for project ${projectId}`);
+  console.log(`[images] Job ${jobId}: ${pendingScenes.length} pending DALL-E scenes for project ${projectId}`);
   res.json({ jobId, status: "queued" });
 
   // Run async
   (async () => {
     try {
       const batchSize = 5;
-      const maxImages = Math.min(prompts.length, 15);
-      const images: { url: string; prompt: string; revised_prompt: string; stored: boolean }[] = [];
+      const maxScenes = Math.min(pendingScenes.length, 15);
+      const resultMap = new Map<number, SceneInput>();
 
-      // Phase 1: Generate in parallel batches
-      for (let batch = 0; batch < maxImages; batch += batchSize) {
-        const batchPrompts = (prompts as string[]).slice(batch, batch + batchSize);
-        console.log(`[images] Job ${jobId}: batch ${Math.floor(batch / batchSize) + 1} — ${batchPrompts.length} images`);
+      // Generate in parallel batches
+      for (let batch = 0; batch < maxScenes; batch += batchSize) {
+        const batchScenes = pendingScenes.slice(batch, batch + batchSize);
+        console.log(`[images] Job ${jobId}: batch ${Math.floor(batch / batchSize) + 1} — ${batchScenes.length} images`);
 
         const results = await Promise.all(
-          batchPrompts.map(async (prompt: string, batchIdx: number) => {
-            const i = batch + batchIdx;
+          batchScenes.map(async (scene) => {
             try {
               const dalleRes = await fetch("https://api.openai.com/v1/images/generations", {
                 method: "POST",
@@ -331,7 +337,7 @@ app.post("/generate-images", async (req, res) => {
                 },
                 body: JSON.stringify({
                   model: "dall-e-3",
-                  prompt,
+                  prompt: scene.prompt,
                   n: 1,
                   size: "1792x1024",
                   quality: "hd",
@@ -339,43 +345,51 @@ app.post("/generate-images", async (req, res) => {
               });
 
               if (!dalleRes.ok) {
-                const err = await dalleRes.text();
-                console.error(`[images] Job ${jobId}: DALL-E ${i + 1} failed: ${err.slice(0, 200)}`);
-                return null;
+                const errBody = await dalleRes.json().catch(() => ({ error: {} })) as { error?: { code?: string; message?: string } };
+                const isContentPolicy = errBody?.error?.code === "content_policy_violation";
+                const errMsg = errBody?.error?.message || "DALL-E generation failed";
+                console.error(`[images] Job ${jobId}: scene ${scene.scene_id} ${isContentPolicy ? "rejected" : "failed"}: ${errMsg.slice(0, 200)}`);
+                return { ...scene, status: isContentPolicy ? "rejected" : "failed", error: errMsg, image_url: null };
               }
 
-              const dalleData = await dalleRes.json() as {
-                data: { url: string; revised_prompt: string }[];
-              };
+              const dalleData = await dalleRes.json() as { data: { url: string; revised_prompt: string }[] };
               const imgUrl = dalleData.data[0]?.url;
               const revisedPrompt = dalleData.data[0]?.revised_prompt || "";
-
-              if (!imgUrl) return null;
+              if (!imgUrl) return { ...scene, status: "failed", error: "No image URL in response", image_url: null };
 
               // Download and upload to R2
               const imgRes = await fetch(imgUrl);
-              if (!imgRes.ok) return null;
+              if (!imgRes.ok) return { ...scene, status: "failed", error: "Failed to download image", image_url: null };
               const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-              const tmpPath = path.join(os.tmpdir(), `dalle-${jobId}-${i}.png`);
+              const tmpPath = path.join(os.tmpdir(), `dalle-${jobId}-${scene.scene_id}.png`);
               await fs.writeFile(tmpPath, imgBuffer);
 
-              const r2Key = `images/${projectId}/dalle-scene-${String(i + 1).padStart(3, "0")}.png`;
+              const r2Key = `images/${projectId}/dalle-scene-${String(scene.scene_id).padStart(3, "0")}.png`;
               const publicUrl = await uploadToR2(tmpPath, r2Key, "image/png");
               await fs.unlink(tmpPath).catch(() => {});
 
-              return { url: publicUrl, prompt, revised_prompt: revisedPrompt, stored: true };
+              return { ...scene, status: "completed", image_url: publicUrl, revised_prompt: revisedPrompt, error: undefined };
             } catch (err) {
-              console.error(`[images] Job ${jobId}: image ${i + 1} failed:`, err);
-              return null;
+              console.error(`[images] Job ${jobId}: scene ${scene.scene_id} failed:`, err);
+              return { ...scene, status: "failed", error: String(err), image_url: null };
             }
           })
         );
 
-        images.push(...results.filter(Boolean) as typeof images);
+        for (const r of results) resultMap.set(r.scene_id, r);
       }
 
-      console.log(`[images] Job ${jobId}: completed — ${images.length}/${maxImages} images generated`);
+      // Merge results into full scene list
+      const mergedScenes = fullScenes.map(s => resultMap.get(s.scene_id) || s);
+      const completedCount = mergedScenes.filter(s => s.status === "completed" && s.image_url).length;
+
+      // Build legacy images[] for backwards compat
+      const images = mergedScenes
+        .filter(s => s.status === "completed" && s.image_url)
+        .map(s => ({ url: s.image_url!, prompt: s.prompt, revised_prompt: s.revised_prompt || "", stored: true }));
+
+      console.log(`[images] Job ${jobId}: completed — ${completedCount}/${mergedScenes.length} scenes generated`);
 
       if (callbackUrl) {
         try {
@@ -388,11 +402,12 @@ app.post("/generate-images", async (req, res) => {
               status: "completed",
               output: {
                 status: "completed",
+                scenes: mergedScenes,
                 images,
-                total_prompts: prompts.length,
-                generated: images.length,
+                total_prompts: mergedScenes.length,
+                generated: completedCount,
               },
-              cost_cents: images.length * 8, // ~$0.08 per DALL-E 3 HD
+              cost_cents: completedCount * 8,
             }),
           });
         } catch (err) {
