@@ -587,7 +587,7 @@ export default function ProjectDetailPage() {
     });
 
   // Inject missing asset steps that the pipeline has passed (no DB row but assets may exist)
-  const existingStepIds = new Set(completedOutputs.map(o => o.step));
+  const existingStepIds = new Set<string>(completedOutputs.map(o => o.step));
   for (const assetStepId of ASSET_STEPS) {
     if (existingStepIds.has(assetStepId)) continue;
     const def = STEPS.find(d => d.id === assetStepId);
