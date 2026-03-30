@@ -47,4 +47,5 @@ export const OUTPUT_LABELS: Record<string, string> = {
   retention: "Retention Structure",
   engagement: "Comment Magnets",
   upload: "Upload Blueprint",
+  motion_specs: "Motion Graphics",
 };

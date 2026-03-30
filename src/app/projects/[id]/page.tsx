@@ -575,11 +575,23 @@ export default function ProjectDetailPage() {
       let mainText = "";
       let label = def?.label || s.step;
       if (s.output) {
+        // First pass: prefer known primary output keys (OUTPUT_LABELS) to avoid
+        // JSONB alphabetical re-ordering picking truncated reference fields first
         for (const [key, val] of Object.entries(s.output)) {
-          if (typeof val === "string" && val.length > 50) {
+          if (OUTPUT_LABELS[key] && typeof val === "string" && val.length > 50) {
             mainText = val;
-            if (OUTPUT_LABELS[key]) label = OUTPUT_LABELS[key];
+            label = OUTPUT_LABELS[key];
             break;
+          }
+        }
+        // Second pass: fall back to first long string if no labeled key found
+        if (!mainText) {
+          for (const [key, val] of Object.entries(s.output)) {
+            if (typeof val === "string" && val.length > 50) {
+              mainText = val;
+              if (OUTPUT_LABELS[key]) label = OUTPUT_LABELS[key];
+              break;
+            }
           }
         }
       }
