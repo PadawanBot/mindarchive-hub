@@ -571,7 +571,7 @@ export default function ProjectDetailPage() {
   // Collect completed step outputs for display below the pipeline
   // Production asset steps (image_generation, etc.) also show when they have any status,
   // so the UI can fetch assets from the DB even if the step output is incomplete.
-  const ASSET_STEPS: PipelineStep[] = ["image_generation", "voiceover_generation", "stock_footage", "motion_graphic_cards", "hero_scenes"];
+  const ASSET_STEPS: PipelineStep[] = ["image_generation", "voiceover_generation", "stock_footage", "motion_graphic_cards", "hero_scenes", "thumbnail_generation"];
   const maxCompletedOrder = Math.max(0, ...steps.filter(s => s.status === "completed").map(s => STEPS.find(d => d.id === s.step)?.order || 0));
 
   // Use explicit type so we can push asset step placeholders later

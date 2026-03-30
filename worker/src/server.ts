@@ -292,7 +292,7 @@ app.post("/assemble", async (req, res) => {
 // ── Generate DALL-E images in parallel batches → R2 ──
 
 app.post("/generate-images", async (req, res) => {
-  const { projectId, scenes, allScenes, prompts, callbackUrl } = req.body;
+  const { projectId, step: stepName, scenes, allScenes, prompts, imageSize, callbackUrl } = req.body;
 
   // Accept scenes[] (new) or prompts[] (legacy)
   interface SceneInput { scene_id: number; label: string; prompt: string; image_url?: string | null; revised_prompt?: string | null; status?: string; error?: string; ken_burns?: string }
@@ -339,7 +339,7 @@ app.post("/generate-images", async (req, res) => {
                   model: "dall-e-3",
                   prompt: scene.prompt,
                   n: 1,
-                  size: "1792x1024",
+                  size: imageSize || "1792x1024",
                   quality: "hd",
                 }),
               });
@@ -391,6 +391,7 @@ app.post("/generate-images", async (req, res) => {
 
       console.log(`[images] Job ${jobId}: completed — ${completedCount}/${mergedScenes.length} scenes generated`);
 
+      const callbackStep = stepName || "image_generation";
       if (callbackUrl) {
         try {
           await fetch(callbackUrl, {
@@ -398,7 +399,7 @@ app.post("/generate-images", async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               projectId,
-              step: "image_generation",
+              step: callbackStep,
               status: "completed",
               output: {
                 status: "completed",
@@ -416,6 +417,7 @@ app.post("/generate-images", async (req, res) => {
       }
     } catch (err) {
       console.error(`[images] Job ${jobId} failed:`, err);
+      const callbackStep = stepName || "image_generation";
       if (callbackUrl) {
         try {
           await fetch(callbackUrl, {
@@ -423,7 +425,7 @@ app.post("/generate-images", async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               projectId,
-              step: "image_generation",
+              step: callbackStep,
               status: "failed",
               error: String(err),
             }),

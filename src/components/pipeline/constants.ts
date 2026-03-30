@@ -28,6 +28,7 @@ export const STEPS: StepDef[] = [
   { id: "motion_graphic_cards", label: "Motion Graphic Cards", phase: "production", order: 17 },
   { id: "stock_footage", label: "Stock Footage", phase: "production", order: 18 },
   { id: "hero_scenes", label: "Hero Scenes", phase: "production", order: 19 },
+  { id: "thumbnail_generation", label: "Thumbnail Generation", phase: "production", order: 20 },
 ];
 
 export const PRE_PROD_STEPS = STEPS.filter(s => s.phase === "pre_production");

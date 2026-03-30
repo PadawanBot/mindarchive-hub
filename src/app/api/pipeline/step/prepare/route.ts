@@ -403,6 +403,91 @@ export async function POST(request: Request) {
         }
       }
 
+      // Route thumbnail_generation to EC2 worker (DALL-E calls exceed Vercel 60s timeout)
+      if (step === "thumbnail_generation" && workerUrl) {
+        const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
+
+        // Parse thumbnail concepts from thumbnail_creation output
+        const thumbStep = existingSteps.find(s => s.step === "thumbnail_creation");
+        const thumbnailsRaw = (thumbStep?.output as { thumbnails?: string })?.thumbnails || "";
+
+        interface ThumbConcept { concept_name?: string; dalle_prompt?: string; }
+        let concepts: ThumbConcept[] = [];
+        if (thumbnailsRaw) {
+          try {
+            const p = JSON.parse(thumbnailsRaw.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
+            if (Array.isArray(p)) concepts = p;
+            else if (Array.isArray(p?.concepts)) concepts = p.concepts;
+            else if (Array.isArray(p?.thumbnails)) concepts = p.thumbnails;
+          } catch { /* skip */ }
+        }
+
+        const allScenes: SceneImage[] = concepts.slice(0, 3).map((c, i) => ({
+          scene_id: i + 1,
+          label: c.concept_name || `Thumbnail ${i + 1}`,
+          prompt: c.dalle_prompt || project.topic,
+          image_url: null,
+          revised_prompt: null,
+          status: "pending" as import("@/types").SceneImageStatus,
+        }));
+
+        // Resume: check existing step output for completed scenes
+        const thumbGenStep = existingSteps.find(s => s.step === "thumbnail_generation");
+        const existingScenes = (thumbGenStep?.output as { scenes?: SceneImage[] })?.scenes || [];
+        const completedMap = new Map(
+          existingScenes.filter(s => s.status === "completed" && s.image_url).map(s => [s.scene_id, s])
+        );
+
+        // Merge: carry forward completed scenes, mark rest as pending
+        const mergedScenes: SceneImage[] = allScenes.map(scene => {
+          const existing = completedMap.get(scene.scene_id);
+          return existing ? { ...scene, ...existing } : scene;
+        });
+        const pendingScenes = mergedScenes.filter(s => s.status !== "completed");
+
+        if (allScenes.length > 0 && pendingScenes.length === 0) {
+          console.log(`[prepare] thumbnail_generation: all ${allScenes.length} scenes already completed — skipping worker`);
+          return NextResponse.json({
+            success: true,
+            data: { needs_llm: false, already_complete: true, step, project_id },
+          });
+        }
+
+        if (allScenes.length > 0) {
+          try {
+            const workerRes = await fetch(`${workerUrl}/generate-images`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(process.env.WORKER_SECRET ? { Authorization: `Bearer ${process.env.WORKER_SECRET}` } : {}),
+              },
+              body: JSON.stringify({
+                projectId: project_id,
+                step: "thumbnail_generation",
+                scenes: pendingScenes,
+                allScenes: mergedScenes,
+                imageSize: "1792x1024",
+                callbackUrl,
+              }),
+            });
+
+            if (workerRes.ok) {
+              const { jobId } = await workerRes.json();
+              console.log(`[prepare] thumbnail_generation routed to worker — job ${jobId}, ${pendingScenes.length} pending of ${allScenes.length} total`);
+              return NextResponse.json({
+                success: true,
+                data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },
+              });
+            } else {
+              const errText = await workerRes.text();
+              console.error(`[prepare] Worker /generate-images (thumbnail_generation) failed: ${errText}`);
+            }
+          } catch (err) {
+            console.error(`[prepare] Failed to reach worker for thumbnail_generation:`, err);
+          }
+        }
+      }
+
       // Non-LLM step (motion_graphics, stock_footage, etc.) — run directly via Vercel
       return NextResponse.json({
         success: true,

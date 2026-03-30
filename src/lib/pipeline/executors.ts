@@ -1020,6 +1020,13 @@ const hero_scenes: StepExecutor = async (ctx) => {
   };
 };
 
+// ─── Thumbnail Generation executor (worker-routed via prepare route) ───
+
+const thumbnail_generation: StepExecutor = async (_ctx) => {
+  // Worker-routed via prepare route — this executor is not called directly
+  return { output: { status: "skipped", reason: "Routed to worker in prepare step" }, cost_cents: 0 };
+};
+
 // ─── Executor registry ───
 
 export const executors: Record<PipelineStep, StepExecutor> = {
@@ -1042,4 +1049,5 @@ export const executors: Record<PipelineStep, StepExecutor> = {
   motion_graphic_cards,
   stock_footage,
   hero_scenes,
+  thumbnail_generation,
 };

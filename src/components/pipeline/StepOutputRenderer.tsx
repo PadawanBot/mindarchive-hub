@@ -37,6 +37,9 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
       ) : step === "motion_graphic_cards" && output?.scenes && Array.isArray(output.scenes) ? (
         /* Motion Graphic Cards — pre-rendered PNG cards */
         <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
+      ) : step === "thumbnail_generation" && output?.scenes && Array.isArray(output.scenes) ? (
+        /* Thumbnail Generation — DALL-E rendered thumbnail images */
+        <SceneImagePanel scenes={output.scenes as import("@/types").SceneImage[]} projectId={projectId} onScenesChanged={onOutputChanged} />
       ) : step === "voiceover_generation" && output ? (
         /* Voiceover — show audio player if URL available */
         <AudioPlayer output={output} />

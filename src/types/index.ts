@@ -74,7 +74,8 @@ export type PipelineStep =
   | "stock_footage"
   | "motion_graphics"
   | "motion_graphic_cards"
-  | "hero_scenes";
+  | "hero_scenes"
+  | "thumbnail_generation";
 
 export type PipelinePhase = "pre_production" | "production";
 

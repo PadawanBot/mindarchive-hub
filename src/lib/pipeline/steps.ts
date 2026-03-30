@@ -205,6 +205,16 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     description: "Generate cinematic hero shots using Runway AI from key DALL-E images.",
     skippable: true,
   },
+  {
+    id: "thumbnail_generation",
+    label: "Thumbnail Generation",
+    phase: "production",
+    order: 20,
+    provider: "dalle",
+    dependsOn: ["thumbnail_creation"],
+    description: "Generate DALL-E thumbnail images from the thumbnail concepts. No text in images — text overlays are added in post-production.",
+    skippable: true,
+  },
 ];
 
 /**
