@@ -580,7 +580,7 @@ app.post("/generate-hero-scenes", async (req, res) => {
 
   (async () => {
     try {
-      const RUNWAY_API = "https://api.runwayml.com/v1";
+      const RUNWAY_API = "https://api.dev.runwayml.com/v1";
       const resultMap = new Map<number, SceneInput>();
 
       // Submit all pending scenes in parallel
