@@ -8,6 +8,10 @@ import { v4 as uuid } from "uuid";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs/promises";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -438,6 +442,78 @@ app.post("/generate-images", async (req, res) => {
 
 // ── Generate voiceover via ElevenLabs → R2 ──
 
+/**
+ * Split text into chunks ≤maxChars on paragraph boundaries.
+ * Prevents ElevenLabs 10,000-char limit errors on long scripts.
+ */
+function splitIntoChunks(text: string, maxChars = 9500): string[] {
+  const paragraphs = text.split(/\n\n+/);
+  const chunks: string[] = [];
+  let current = "";
+  for (const para of paragraphs) {
+    const candidate = current ? current + "\n\n" + para : para;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+    } else {
+      if (current) chunks.push(current);
+      // If a single paragraph exceeds maxChars, split on sentence boundaries
+      if (para.length > maxChars) {
+        const sentences = para.split(/(?<=[.!?])\s+/);
+        let sentChunk = "";
+        for (const s of sentences) {
+          const sc = sentChunk ? sentChunk + " " + s : s;
+          if (sc.length <= maxChars) { sentChunk = sc; }
+          else { if (sentChunk) chunks.push(sentChunk); sentChunk = s; }
+        }
+        current = sentChunk;
+      } else {
+        current = para;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.filter(Boolean);
+}
+
+/**
+ * Call ElevenLabs TTS for a single text chunk, return MP3 Buffer.
+ */
+async function ttsChunk(
+  text: string,
+  voiceId: string,
+  modelId: string,
+  voiceSettings: Record<string, unknown>,
+  elevenLabsKey: string
+): Promise<Buffer> {
+  const ttsRes = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": elevenLabsKey,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({ text, model_id: modelId, voice_settings: voiceSettings }),
+    }
+  );
+
+  if (!ttsRes.ok) {
+    const errText = await ttsRes.text();
+    throw new Error(`ElevenLabs API error ${ttsRes.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const parts: Buffer[] = [];
+  const reader = ttsRes.body?.getReader();
+  if (!reader) throw new Error("No response body from ElevenLabs");
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(Buffer.from(value));
+  }
+  return Buffer.concat(parts);
+}
+
 app.post("/generate-voiceover", async (req, res) => {
   const { projectId, text, voiceId, modelId, voiceSettings, elevenLabsKey, callbackUrl } = req.body;
 
@@ -447,91 +523,111 @@ app.post("/generate-voiceover", async (req, res) => {
 
   const jobId = uuid();
   const wordCount = text.split(/\s+/).length;
-  console.log(`[voiceover] Job ${jobId}: ${wordCount} words, voice ${voiceId}`);
+  const resolvedModel = modelId || "eleven_multilingual_v2";
+  const resolvedVoiceSettings = voiceSettings || { stability: 0.5, similarity_boost: 0.75, style: 0.5, use_speaker_boost: true };
+
+  console.log(`[voiceover] Job ${jobId}: ${wordCount} words (${text.length} chars), voice ${voiceId}`);
   res.json({ jobId, status: "queued" });
 
-  // Run async
   (async () => {
     try {
-      const ttsRes = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": elevenLabsKey,
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg",
-          },
-          body: JSON.stringify({
-            text,
-            model_id: modelId || "eleven_multilingual_v2",
-            voice_settings: voiceSettings || {
-              stability: 0.5,
-              similarity_boost: 0.75,
-              style: 0.5,
-              use_speaker_boost: true,
-            },
-          }),
-        }
-      );
+      const textChunks = splitIntoChunks(text);
+      console.log(`[voiceover] Job ${jobId}: ${textChunks.length} chunk(s) — sizes: ${textChunks.map(c => c.length).join(", ")} chars`);
 
-      if (!ttsRes.ok) {
-        const errText = await ttsRes.text();
-        throw new Error(`ElevenLabs API error ${ttsRes.status}: ${errText.slice(0, 300)}`);
-      }
+      let audioBuffer: Buffer;
+      let totalBytes: number;
 
-      // Read full audio stream
-      const chunks: Buffer[] = [];
-      const reader = ttsRes.body?.getReader();
-      if (!reader) throw new Error("No response body from ElevenLabs");
+      if (textChunks.length === 1) {
+        // Single chunk — direct upload
+        audioBuffer = await ttsChunk(text, voiceId, resolvedModel, resolvedVoiceSettings, elevenLabsKey);
+        totalBytes = audioBuffer.length;
+        console.log(`[voiceover] Job ${jobId}: single chunk, ${(totalBytes / 1024 / 1024).toFixed(1)} MB`);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(Buffer.from(value));
-      }
+        const tmpPath = path.join(os.tmpdir(), `voiceover-${jobId}.mp3`);
+        await fs.writeFile(tmpPath, audioBuffer);
+        const r2Key = `audio/${projectId}/voiceover.mp3`;
+        const audioUrl = await uploadToR2(tmpPath, r2Key, "audio/mpeg");
+        await fs.unlink(tmpPath).catch(() => {});
 
-      const audioBuffer = Buffer.concat(chunks);
-      const totalBytes = audioBuffer.length;
-      console.log(`[voiceover] Job ${jobId}: received ${(totalBytes / 1024 / 1024).toFixed(1)} MB audio`);
+        const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
+        console.log(`[voiceover] Job ${jobId}: uploaded to ${audioUrl}`);
 
-      // Upload to R2
-      const tmpPath = path.join(os.tmpdir(), `voiceover-${jobId}.mp3`);
-      await fs.writeFile(tmpPath, audioBuffer);
-
-      const r2Key = `audio/${projectId}/voiceover.mp3`;
-      const audioUrl = await uploadToR2(tmpPath, r2Key, "audio/mpeg");
-      await fs.unlink(tmpPath).catch(() => {});
-
-      const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
-
-      console.log(`[voiceover] Job ${jobId}: uploaded to ${audioUrl}`);
-
-      if (callbackUrl) {
-        try {
+        if (callbackUrl) {
           await fetch(callbackUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projectId,
-              step: "voiceover_generation",
-              status: "completed",
+              projectId, step: "voiceover_generation", status: "completed",
               output: {
-                status: "completed",
-                voice_id: voiceId,
-                narration_length: text.length,
-                word_count: wordCount,
+                status: "completed", voice_id: voiceId,
+                narration_length: text.length, word_count: wordCount,
                 estimated_duration_minutes: estimatedDurationMin,
-                audio_confirmed: true,
-                audio_url: audioUrl,
+                audio_confirmed: true, audio_url: audioUrl,
                 audio_size_bytes: totalBytes,
                 note: "Audio uploaded to R2 via worker.",
               },
               cost_cents: Math.ceil(text.length * 0.003),
             }),
           });
-        } catch (err) {
-          console.error(`[voiceover] Job ${jobId}: callback failed:`, err);
+        }
+      } else {
+        // Multiple chunks — generate each, concat with ffmpeg
+        const chunkPaths: string[] = [];
+        let chunkTotalBytes = 0;
+
+        for (let i = 0; i < textChunks.length; i++) {
+          console.log(`[voiceover] Job ${jobId}: generating chunk ${i + 1}/${textChunks.length} (${textChunks[i].length} chars)`);
+          const chunkBuf = await ttsChunk(textChunks[i], voiceId, resolvedModel, resolvedVoiceSettings, elevenLabsKey);
+          chunkTotalBytes += chunkBuf.length;
+          const chunkPath = path.join(os.tmpdir(), `voiceover-${jobId}-chunk${i}.mp3`);
+          await fs.writeFile(chunkPath, chunkBuf);
+          chunkPaths.push(chunkPath);
+        }
+
+        console.log(`[voiceover] Job ${jobId}: concatenating ${chunkPaths.length} chunks with ffmpeg`);
+
+        // Write ffmpeg concat list
+        const concatListPath = path.join(os.tmpdir(), `voiceover-${jobId}-concat.txt`);
+        const concatContent = chunkPaths.map(p => `file '${p}'`).join("\n");
+        await fs.writeFile(concatListPath, concatContent);
+
+        const outputPath = path.join(os.tmpdir(), `voiceover-${jobId}.mp3`);
+        await execFileAsync("ffmpeg", [
+          "-y", "-f", "concat", "-safe", "0",
+          "-i", concatListPath,
+          "-c", "copy",
+          outputPath,
+        ]);
+
+        // Cleanup chunk files and concat list
+        await Promise.all([...chunkPaths, concatListPath].map(p => fs.unlink(p).catch(() => {})));
+
+        totalBytes = chunkTotalBytes;
+        const r2Key = `audio/${projectId}/voiceover.mp3`;
+        const audioUrl = await uploadToR2(outputPath, r2Key, "audio/mpeg");
+        await fs.unlink(outputPath).catch(() => {});
+
+        const estimatedDurationMin = Math.round(wordCount / 150 * 10) / 10;
+        console.log(`[voiceover] Job ${jobId}: ${textChunks.length}-chunk concat uploaded to ${audioUrl}`);
+
+        if (callbackUrl) {
+          await fetch(callbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId, step: "voiceover_generation", status: "completed",
+              output: {
+                status: "completed", voice_id: voiceId,
+                narration_length: text.length, word_count: wordCount,
+                estimated_duration_minutes: estimatedDurationMin,
+                audio_confirmed: true, audio_url: audioUrl,
+                audio_size_bytes: totalBytes,
+                chunks_generated: textChunks.length,
+                note: `Audio assembled from ${textChunks.length} chunks and uploaded to R2 via worker.`,
+              },
+              cost_cents: Math.ceil(text.length * 0.003),
+            }),
+          });
         }
       }
     } catch (err) {
@@ -542,10 +638,7 @@ app.post("/generate-voiceover", async (req, res) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projectId,
-              step: "voiceover_generation",
-              status: "failed",
-              error: String(err),
+              projectId, step: "voiceover_generation", status: "failed", error: String(err),
             }),
           });
         } catch {}
