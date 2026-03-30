@@ -8,6 +8,7 @@ import { SceneImagePanel } from "./outputs/SceneImagePanel";
 import { AudioPlayer } from "./outputs/AudioPlayer";
 import { StockFootageGrid } from "./outputs/StockFootageGrid";
 import { HeroScenesViewer } from "./outputs/HeroScenesViewer";
+import { SceneVideoPanel } from "./outputs/SceneVideoPanel";
 import { TextOutput } from "./outputs/TextOutput";
 import { VisualDirectionOutput } from "./outputs/VisualDirectionOutput";
 
@@ -39,8 +40,11 @@ export function StepOutputRenderer({ step, label, text, output, projectId, onOut
       ) : step === "stock_footage" && output?.footage && Array.isArray(output.footage) ? (
         /* Stock Footage — unified search results + slot management */
         <StockFootageGrid output={output} projectId={projectId} onOutputChanged={onOutputChanged} />
+      ) : step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) && (output.scenes as Record<string, unknown>[])[0]?.scene_id != null ? (
+        /* Hero Scenes — scene-mapped panel (new format with scene_id) */
+        <SceneVideoPanel scenes={output.scenes as import("@/types").SceneVideo[]} projectId={projectId} onScenesChanged={onOutputChanged} />
       ) : step === "hero_scenes" && output?.scenes && Array.isArray(output.scenes) ? (
-        /* Hero Scenes — show video previews with Runway polling */
+        /* Hero Scenes — legacy viewer */
         <HeroScenesViewer
           scenes={output.scenes as { task_id?: string; taskId?: string; status?: string; video_url?: string; image_url?: string; imageUrl?: string; prompt?: string; promptText?: string }[]}
           skipped={output.status === "skipped"}

@@ -113,19 +113,36 @@ export async function POST(request: Request) {
         const currentOutput = (existing?.output || {}) as Record<string, unknown>;
 
         if (assetType === "runway_video") {
-          // Hero scenes: assembler reads heroScenes.scenes[].video_url
-          const scenes = Array.isArray(currentOutput.scenes) ? [...currentOutput.scenes] : [];
-          scenes.push({
-            section: slotName || `Hero Scene ${scenes.length + 1}`,
-            promptText: `Manually uploaded: ${file.name}`,
-            taskId: `manual_${Date.now()}`,
-            video_url: url,
-            source: "manual",
-          });
-          await upsertStep(projectId, step, {
-            output: { ...currentOutput, status: "completed", scenes },
-            modified_at: new Date().toISOString(),
-          } as Record<string, unknown>);
+          // Hero scenes: update SceneVideo[] (new format) or legacy scenes[]
+          if (Array.isArray(currentOutput.scenes) && (currentOutput.scenes as Record<string, unknown>[])[0]?.scene_id != null) {
+            // New SceneVideo format: find scene by slot_name pattern "scenes[N].video_url"
+            const sceneIndexMatch = slotName?.match(/scenes\[(\d+)\]\.video_url/);
+            const scenes = [...currentOutput.scenes] as Record<string, unknown>[];
+            if (sceneIndexMatch) {
+              const idx = parseInt(sceneIndexMatch[1], 10);
+              if (idx >= 0 && idx < scenes.length) {
+                scenes[idx] = { ...scenes[idx], video_url: url, status: "completed", error: undefined, task_id: `manual_${Date.now()}` };
+              }
+            }
+            await upsertStep(projectId, step, {
+              output: { ...currentOutput, status: "completed", scenes, total_requested: scenes.length },
+              modified_at: new Date().toISOString(),
+            } as Record<string, unknown>);
+          } else {
+            // Legacy format
+            const scenes = Array.isArray(currentOutput.scenes) ? [...currentOutput.scenes] : [];
+            scenes.push({
+              section: slotName || `Hero Scene ${scenes.length + 1}`,
+              promptText: `Manually uploaded: ${file.name}`,
+              taskId: `manual_${Date.now()}`,
+              video_url: url,
+              source: "manual",
+            });
+            await upsertStep(projectId, step, {
+              output: { ...currentOutput, status: "completed", scenes },
+              modified_at: new Date().toISOString(),
+            } as Record<string, unknown>);
+          }
         } else if (assetType === "dalle_image") {
           // DALL-E images: update scenes[] (new format) or images[] (legacy)
           if (Array.isArray(currentOutput.scenes)) {

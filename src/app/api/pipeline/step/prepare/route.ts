@@ -3,8 +3,8 @@ import { getById, update, getAllSettings, upsertStep, getStepsByProject } from "
 import { buildPrompt } from "@/lib/pipeline/prompts";
 import { getStepDef, canRunStep, getNextStep } from "@/lib/pipeline/steps";
 import { deleteAssetsByStep } from "@/lib/asset-db";
-import type { Project, ChannelProfile, FormatPreset, PipelineStep, SceneImage } from "@/types";
-import { parseDalleScenes } from "@/lib/pipeline/parse-visual-scenes";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, SceneImage, SceneVideo } from "@/types";
+import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
 
 export const maxDuration = 15;
 
@@ -293,51 +293,62 @@ export async function POST(request: Request) {
         if (runwayKey) {
           const callbackUrl = "https://mindarchive-hub.vercel.app/api/pipeline/step/llm-callback";
 
-          // Extract RUNWAY prompts from visual direction
+          // Extract RUNWAY scenes from visual direction using shared parser
           const visualStep = existingSteps.find(s => s.step === "visual_direction");
           const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
-          let heroScenes: { section: string; promptText: string }[] = [];
-
-          try {
-            const VD_SEP = "=== VISUAL DIRECTION JSON ===";
-            const vdSepIdx = visuals.indexOf(VD_SEP);
-            let vdJson = vdSepIdx !== -1 ? visuals.slice(vdSepIdx + VD_SEP.length).trim() : visuals.trim();
-            if (vdJson.startsWith("```")) vdJson = vdJson.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-            let parsed = JSON.parse(vdJson);
-            if (!Array.isArray(parsed) && typeof parsed === "object") {
-              for (const k of ["scenes", "data", "entries"]) {
-                if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
-              }
-            }
-            if (Array.isArray(parsed)) {
-              heroScenes = parsed
-                .filter((s: Record<string, unknown>) =>
-                  // Gold standard: tag + runway_prompt
-                  (s.tag === "RUNWAY" && typeof s.runway_prompt === "string") ||
-                  // Legacy: tag_type + prompt
-                  (s.tag_type === "RUNWAY" && (typeof s.prompt === "string" || typeof s.dalle_prompt === "string"))
-                )
-                .map((s: Record<string, unknown>) => ({
-                  section: String(s.label || s.scene || s.section || `Scene ${s.scene_id || ""}`),
-                  promptText: String(s.tag === "RUNWAY" ? s.runway_prompt : (s.prompt || s.dalle_prompt)),
-                }))
-                .slice(0, 5);
-            }
-          } catch {}
+          const allScenes = parseRunwayScenes(visuals);
 
           // Fallback: extract from script if no RUNWAY tags in visual direction
-          if (heroScenes.length === 0) {
+          if (allScenes.length === 0) {
             const scriptStep = existingSteps.find(s => s.step === "script_refinement" || s.step === "script_writing");
             const script = (scriptStep?.output as { refined_script?: string; script?: string })?.refined_script
               || (scriptStep?.output as { script?: string })?.script || "";
             const runwayMatches = script.match(/\[RUNWAY:\s*([^\]]+)\]/gi) || [];
-            heroScenes = runwayMatches.slice(0, 5).map((m, i) => ({
-              section: `Hero Scene ${i + 1}`,
-              promptText: m.replace(/\[RUNWAY:\s*/i, "").replace(/\]$/, "").trim(),
-            }));
+            runwayMatches.slice(0, 5).forEach((m, i) => {
+              allScenes.push({
+                scene_id: i + 1,
+                label: `Hero Scene ${i + 1}`,
+                prompt: m.replace(/\[RUNWAY:\s*/i, "").replace(/\]$/, "").trim(),
+                video_url: null, task_id: null, status: "pending",
+              });
+            });
           }
 
-          if (heroScenes.length > 0) {
+          // Resume: check existing step output for completed scenes
+          const heroStep = existingSteps.find(s => s.step === "hero_scenes");
+          const heroOutput = heroStep?.output as { scenes?: SceneVideo[] } | undefined;
+          const existingHeroScenes = heroOutput?.scenes || [];
+          const completedHeroMap = new Map(
+            existingHeroScenes.filter(s => s.status === "completed" && s.video_url).map(s => [s.scene_id, s])
+          );
+
+          // Also check legacy format — match by prompt text
+          if (completedHeroMap.size === 0 && Array.isArray(heroOutput?.scenes)) {
+            const legacyScenes = heroOutput!.scenes as unknown as { section?: string; promptText?: string; video_url?: string }[];
+            for (const scene of allScenes) {
+              const match = legacyScenes.find(ls => ls.video_url && (ls.promptText?.trim() === scene.prompt.trim()));
+              if (match) {
+                completedHeroMap.set(scene.scene_id, { ...scene, status: "completed", video_url: match.video_url! });
+              }
+            }
+          }
+
+          // Merge completed scenes
+          const mergedScenes: SceneVideo[] = allScenes.map(scene => {
+            const existing = completedHeroMap.get(scene.scene_id);
+            return existing ? { ...scene, ...existing } : scene;
+          });
+          const pendingScenes = mergedScenes.filter(s => s.status !== "completed");
+
+          if (allScenes.length > 0 && pendingScenes.length === 0) {
+            console.log(`[prepare] hero_scenes: all ${allScenes.length} scenes already completed — skipping worker`);
+            return NextResponse.json({
+              success: true,
+              data: { needs_llm: false, already_complete: true, step, project_id },
+            });
+          }
+
+          if (allScenes.length > 0) {
             try {
               const workerRes = await fetch(`${workerUrl}/generate-hero-scenes`, {
                 method: "POST",
@@ -347,7 +358,8 @@ export async function POST(request: Request) {
                 },
                 body: JSON.stringify({
                   projectId: project_id,
-                  scenes: heroScenes,
+                  scenes: pendingScenes.map(s => ({ scene_id: s.scene_id, section: s.label, promptText: s.prompt })),
+                  allScenes: mergedScenes,
                   runwayKey,
                   callbackUrl,
                 }),
@@ -355,7 +367,7 @@ export async function POST(request: Request) {
 
               if (workerRes.ok) {
                 const { jobId } = await workerRes.json();
-                console.log(`[prepare] hero_scenes routed to worker — job ${jobId}, ${heroScenes.length} scenes`);
+                console.log(`[prepare] hero_scenes routed to worker — job ${jobId}, ${pendingScenes.length} pending of ${allScenes.length} total`);
                 return NextResponse.json({
                   success: true,
                   data: { needs_llm: false, routed_to_worker: true, step, project_id, jobId },

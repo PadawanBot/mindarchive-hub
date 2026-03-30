@@ -1,5 +1,5 @@
-import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage } from "@/types";
-import { parseDalleScenes } from "@/lib/pipeline/parse-visual-scenes";
+import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage, SceneVideo } from "@/types";
+import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
 import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
 import { generateWithGPT } from "@/lib/providers/openai";
@@ -735,83 +735,74 @@ const hero_scenes: StepExecutor = async (ctx) => {
   const key = ctx.settings.runway_key;
   if (!key) return { output: { status: "skipped", reason: "No Runway ML API key configured" }, cost_cents: 0 };
 
-  // Extract RUNWAY scene prompts from visual direction JSON (same split as image_generation / stock_footage)
+  // Extract RUNWAY scenes from visual direction using shared parser
   const visualOutput = getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string } | undefined;
-  let scenePrompts: { section: string; prompt: string }[] = [];
-
-  if (visualOutput?.visuals) {
-    const visuals = visualOutput.visuals;
-    const VD_SEP = "=== VISUAL DIRECTION JSON ===";
-    const vdSepIdx = visuals.indexOf(VD_SEP);
-    let vdJson = vdSepIdx !== -1 ? visuals.slice(vdSepIdx + VD_SEP.length).trim() : visuals.trim();
-    if (vdJson.startsWith("```")) vdJson = vdJson.replace(/^```(?:json|JSON)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-    try {
-      let parsed = JSON.parse(vdJson);
-      if (!Array.isArray(parsed) && typeof parsed === "object") {
-        for (const k of ["scenes", "data", "entries"]) {
-          if (Array.isArray((parsed as Record<string, unknown>)[k])) { parsed = (parsed as Record<string, unknown>)[k]; break; }
-        }
-      }
-      if (Array.isArray(parsed)) {
-        scenePrompts = parsed
-          .filter((s: Record<string, unknown>) =>
-            // Gold standard: tag + runway_prompt
-            (s.tag === "RUNWAY" && typeof s.runway_prompt === "string") ||
-            // Legacy: tag_type + prompt
-            (s.tag_type === "RUNWAY" && typeof s.prompt === "string")
-          )
-          .map((s: Record<string, unknown>) => ({
-            section: String(s.label || s.scene || s.section || `Scene ${s.scene_id || ""}`),
-            prompt: String(s.tag === "RUNWAY" ? s.runway_prompt : s.prompt),
-          }));
-      }
-    } catch {}
-  }
+  const allScenes = visualOutput?.visuals ? parseRunwayScenes(visualOutput.visuals) : [];
 
   // Fallback: generic cinematic prompts if none found
-  if (scenePrompts.length === 0) {
-    scenePrompts = [
-      {
-        section: "Cold Open",
-        prompt: `Cinematic dramatic opening. A lone figure at the edge of a vast landscape, golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`,
-      },
-      {
-        section: "Climax",
-        prompt: `Dramatic peak moment. Powerful contrast of light and shadow, intense atmosphere, cinematic close-up detail, movie quality. Topic: ${ctx.project.topic}`,
-      },
-    ];
+  if (allScenes.length === 0) {
+    allScenes.push(
+      { scene_id: 1, label: "Cold Open", prompt: `Cinematic dramatic opening. A lone figure at the edge of a vast landscape, golden sunset rays cutting through storm clouds. Epic atmosphere, hyper-detailed, movie quality. Topic: ${ctx.project.topic}`, video_url: null, task_id: null, status: "pending" },
+      { scene_id: 2, label: "Climax", prompt: `Dramatic peak moment. Powerful contrast of light and shadow, intense atmosphere, cinematic close-up detail, movie quality. Topic: ${ctx.project.topic}`, video_url: null, task_id: null, status: "pending" },
+    );
   }
 
-  // Resume support: carry forward scenes that already have taskIds from a prior run
-  type SceneEntry = { promptText: string; section: string; taskId: string; video_url?: string };
-  const prevScenes: SceneEntry[] =
-    (getPrevOutput(ctx.previousSteps, "hero_scenes") as { scenes?: SceneEntry[] })?.scenes || [];
-  const alreadyStarted = new Set(prevScenes.filter(s => s.taskId && !s.taskId.startsWith("error:")).map(s => s.section));
+  // Resume: carry forward completed scenes from prior run
+  const prevOutput = getPrevOutput(ctx.previousSteps, "hero_scenes") as { scenes?: SceneVideo[] } | undefined;
+  const prevScenes = prevOutput?.scenes || [];
+  const completedMap = new Map(
+    prevScenes.filter(s => s.status === "completed" && s.video_url).map(s => [s.scene_id, s])
+  );
 
-  const toProcess = scenePrompts.slice(0, 5).filter(s => !alreadyStarted.has(s.section));
-  const scenes: SceneEntry[] = [...prevScenes.filter(s => s.taskId && !s.taskId.startsWith("error:"))];
-
-  for (const scene of toProcess) {
-    try {
-      const promptText = sanitizePrompt(scene.prompt).slice(0, 1000);
-      const result = await generateVideo(key, promptText);
-      scenes.push({ section: scene.section, promptText, taskId: result.taskId });
-    } catch (err) {
-      scenes.push({ section: scene.section, promptText: scene.prompt.slice(0, 512), taskId: `error: ${String(err)}` });
+  // Also check legacy format — match by prompt text
+  if (completedMap.size === 0 && prevScenes.length > 0) {
+    const legacyScenes = prevScenes as unknown as { section?: string; promptText?: string; video_url?: string; taskId?: string }[];
+    for (const scene of allScenes) {
+      const match = legacyScenes.find(ls => ls.video_url && ls.promptText?.trim() === scene.prompt.trim());
+      if (match) {
+        completedMap.set(scene.scene_id, { ...scene, status: "completed", video_url: match.video_url!, task_id: match.taskId || null });
+      }
     }
   }
 
-  const successCount = scenes.filter((s) => !s.taskId.startsWith("error:")).length;
+  // Merge
+  const scenes: SceneVideo[] = allScenes.map(scene => {
+    const existing = completedMap.get(scene.scene_id);
+    return existing ? { ...scene, ...existing } : scene;
+  });
+  const pendingScenes = scenes.filter(s => s.status !== "completed");
+
+  if (pendingScenes.length === 0) {
+    return {
+      output: { status: "completed", scenes, total_requested: scenes.length, tasks_started: 0 },
+      cost_cents: 0,
+    };
+  }
+
+  // Submit pending scenes to Runway
+  for (const scene of pendingScenes.slice(0, 5)) {
+    try {
+      const promptText = sanitizePrompt(scene.prompt).slice(0, 1000);
+      const result = await generateVideo(key, promptText);
+      const idx = scenes.findIndex(s => s.scene_id === scene.scene_id);
+      if (idx !== -1) scenes[idx] = { ...scene, task_id: result.taskId, status: "submitted", prompt: promptText };
+    } catch (err) {
+      const idx = scenes.findIndex(s => s.scene_id === scene.scene_id);
+      if (idx !== -1) scenes[idx] = { ...scene, status: "failed", error: String(err) };
+    }
+  }
+
+  const submittedCount = scenes.filter(s => s.status === "submitted").length;
 
   return {
     output: {
-      status: successCount > 0 ? "completed" : "failed",
+      status: submittedCount > 0 ? "completed" : "failed",
       scenes,
-      total_requested: scenePrompts.length,
-      tasks_started: successCount,
+      total_requested: allScenes.length,
+      tasks_started: submittedCount,
       note: "Runway tasks started. Auto-polling will check for completion.",
     },
-    cost_cents: toProcess.filter((_s, i) => !scenes[prevScenes.length + i]?.taskId.startsWith("error:")).length * 50,
+    cost_cents: submittedCount * 50,
   };
 };
 

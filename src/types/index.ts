@@ -176,6 +176,20 @@ export interface SceneImage {
   ken_burns?: string;
 }
 
+// ─── Scene Video (Runway generation) ───
+export type SceneVideoStatus = "pending" | "submitted" | "completed" | "failed" | "rejected";
+
+export interface SceneVideo {
+  scene_id: number;
+  label: string;
+  prompt: string;
+  video_url: string | null;
+  task_id: string | null;
+  status: SceneVideoStatus;
+  error?: string;
+  motion_type?: string;
+}
+
 // ─── Script ───
 export interface ScriptSection {
   id: string;

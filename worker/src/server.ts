@@ -557,30 +557,35 @@ app.post("/generate-voiceover", async (req, res) => {
 app.use("/generate-hero-scenes", authMiddleware);
 
 app.post("/generate-hero-scenes", async (req, res) => {
-  const { projectId, scenes, runwayKey, callbackUrl } = req.body as {
-    projectId: string;
-    scenes: { section: string; promptText: string }[];
-    runwayKey: string;
-    callbackUrl?: string;
-  };
+  const { projectId, scenes, allScenes, runwayKey, callbackUrl } = req.body;
 
-  if (!projectId || !scenes?.length || !runwayKey) {
+  // Accept new format (scene_id/prompt) or legacy (section/promptText)
+  interface SceneInput { scene_id: number; label: string; prompt: string; video_url?: string | null; task_id?: string | null; status?: string; error?: string; motion_type?: string }
+  const pendingScenes: SceneInput[] = (scenes || []).map((s: Record<string, unknown>) => ({
+    scene_id: s.scene_id ?? 0,
+    label: s.label || s.section || "",
+    prompt: s.prompt || s.promptText || "",
+    video_url: null, task_id: null, status: "pending",
+    motion_type: s.motion_type || undefined,
+  }));
+  const fullScenes: SceneInput[] = allScenes ? (allScenes as SceneInput[]) : pendingScenes;
+
+  if (!projectId || pendingScenes.length === 0 || !runwayKey) {
     return res.status(400).json({ error: "Missing projectId, scenes, or runwayKey" });
   }
 
   const jobId = uuid();
-  console.log(`[hero] Job ${jobId}: ${scenes.length} Runway scenes for project ${projectId}`);
+  console.log(`[hero] Job ${jobId}: ${pendingScenes.length} pending Runway scenes for project ${projectId}`);
   res.json({ jobId, status: "queued" });
 
-  // Run async
   (async () => {
     try {
       const RUNWAY_API = "https://api.runwayml.com/v1";
-      const completed: { section: string; video_url: string; taskId: string }[] = [];
+      const resultMap = new Map<number, SceneInput>();
 
-      // Submit all scenes in parallel
+      // Submit all pending scenes in parallel
       const tasks = await Promise.all(
-        scenes.slice(0, 5).map(async (scene) => {
+        pendingScenes.slice(0, 5).map(async (scene) => {
           try {
             const submitRes = await fetch(`${RUNWAY_API}/text_to_video`, {
               method: "POST",
@@ -591,79 +596,76 @@ app.post("/generate-hero-scenes", async (req, res) => {
               },
               body: JSON.stringify({
                 model: "gen4.5",
-                promptText: scene.promptText.slice(0, 1000),
+                promptText: scene.prompt.slice(0, 1000),
                 duration: 5,
                 ratio: "1280:720",
               }),
             });
 
             if (!submitRes.ok) {
-              const err = await submitRes.text();
-              console.error(`[hero] Job ${jobId}: Runway submit failed for "${scene.section}": ${err.slice(0, 200)}`);
+              const errBody = await submitRes.json().catch(() => ({ error: {} })) as { error?: { code?: string; message?: string } };
+              const errMsg = errBody?.error?.message || "Runway submission failed";
+              const isContentPolicy = errMsg.toLowerCase().includes("content") && errMsg.toLowerCase().includes("policy");
+              console.error(`[hero] Job ${jobId}: scene ${scene.scene_id} ${isContentPolicy ? "rejected" : "failed"}: ${errMsg.slice(0, 200)}`);
+              resultMap.set(scene.scene_id, { ...scene, status: isContentPolicy ? "rejected" : "failed", error: errMsg });
               return null;
             }
 
             const { id: taskId } = await submitRes.json() as { id: string };
-            console.log(`[hero] Job ${jobId}: submitted "${scene.section}" → task ${taskId}`);
-            return { section: scene.section, taskId };
+            console.log(`[hero] Job ${jobId}: submitted scene ${scene.scene_id} "${scene.label}" → task ${taskId}`);
+            return { ...scene, task_id: taskId, status: "submitted" };
           } catch (err) {
-            console.error(`[hero] Job ${jobId}: submit error for "${scene.section}":`, err);
+            console.error(`[hero] Job ${jobId}: submit error for scene ${scene.scene_id}:`, err);
+            resultMap.set(scene.scene_id, { ...scene, status: "failed", error: String(err) });
             return null;
           }
         })
       );
 
-      const activeTasks = tasks.filter(Boolean) as { section: string; taskId: string }[];
-      console.log(`[hero] Job ${jobId}: ${activeTasks.length}/${scenes.length} tasks submitted, polling...`);
+      const activeTasks = tasks.filter(Boolean) as SceneInput[];
+      console.log(`[hero] Job ${jobId}: ${activeTasks.length}/${pendingScenes.length} tasks submitted, polling...`);
 
-      // Poll all tasks in parallel until done (max 5 min)
-      const MAX_POLL = 60; // 60 * 5s = 5 min
-      const pending = new Set(activeTasks.map(t => t.taskId));
+      // Poll all tasks until done (max 5 min)
+      const MAX_POLL = 60;
+      const pending = new Set(activeTasks.map(t => t.task_id!));
 
       for (let poll = 0; poll < MAX_POLL && pending.size > 0; poll++) {
         await new Promise(r => setTimeout(r, 5000));
 
         for (const task of activeTasks) {
-          if (!pending.has(task.taskId)) continue;
+          if (!task.task_id || !pending.has(task.task_id)) continue;
 
           try {
-            const statusRes = await fetch(`${RUNWAY_API}/tasks/${task.taskId}`, {
-              headers: {
-                Authorization: `Bearer ${runwayKey}`,
-                "X-Runway-Version": "2024-11-06",
-              },
+            const statusRes = await fetch(`${RUNWAY_API}/tasks/${task.task_id}`, {
+              headers: { Authorization: `Bearer ${runwayKey}`, "X-Runway-Version": "2024-11-06" },
             });
-
             if (!statusRes.ok) continue;
             const status = await statusRes.json() as { status: string; output?: string[]; failure?: string };
 
             if (status.status === "SUCCEEDED" && status.output?.[0]) {
-              pending.delete(task.taskId);
+              pending.delete(task.task_id!);
               const videoUrl = status.output[0];
 
-              // Download and upload to R2
               try {
                 const vidRes = await fetch(videoUrl);
                 if (vidRes.ok) {
                   const vidBuffer = Buffer.from(await vidRes.arrayBuffer());
-                  const tmpPath = path.join(os.tmpdir(), `runway-${jobId}-${task.taskId}.mp4`);
+                  const tmpPath = path.join(os.tmpdir(), `runway-${jobId}-${task.scene_id}.mp4`);
                   await fs.writeFile(tmpPath, vidBuffer);
-
-                  const sceneIdx = activeTasks.indexOf(task) + 1;
-                  const r2Key = `runway/${projectId}/scene-${String(sceneIdx).padStart(3, "0")}.mp4`;
+                  const r2Key = `runway/${projectId}/scene-${String(task.scene_id).padStart(3, "0")}.mp4`;
                   const publicUrl = await uploadToR2(tmpPath, r2Key, "video/mp4");
                   await fs.unlink(tmpPath).catch(() => {});
-
-                  completed.push({ section: task.section, video_url: publicUrl, taskId: task.taskId });
-                  console.log(`[hero] Job ${jobId}: "${task.section}" completed → ${publicUrl}`);
+                  resultMap.set(task.scene_id, { ...task, status: "completed", video_url: publicUrl, error: undefined });
+                  console.log(`[hero] Job ${jobId}: scene ${task.scene_id} completed → ${publicUrl}`);
                 }
               } catch (err) {
-                console.error(`[hero] Job ${jobId}: failed to download/upload "${task.section}":`, err);
-                completed.push({ section: task.section, video_url: videoUrl, taskId: task.taskId });
+                console.error(`[hero] Job ${jobId}: download/upload failed for scene ${task.scene_id}:`, err);
+                resultMap.set(task.scene_id, { ...task, status: "completed", video_url: videoUrl, error: undefined });
               }
             } else if (status.status === "FAILED") {
-              pending.delete(task.taskId);
-              console.error(`[hero] Job ${jobId}: "${task.section}" failed: ${status.failure}`);
+              pending.delete(task.task_id!);
+              console.error(`[hero] Job ${jobId}: scene ${task.scene_id} failed: ${status.failure}`);
+              resultMap.set(task.scene_id, { ...task, status: "failed", error: status.failure || "Runway generation failed" });
             }
           } catch {}
         }
@@ -671,9 +673,18 @@ app.post("/generate-hero-scenes", async (req, res) => {
 
       if (pending.size > 0) {
         console.warn(`[hero] Job ${jobId}: ${pending.size} tasks timed out after 5 min`);
+        for (const task of activeTasks) {
+          if (task.task_id && pending.has(task.task_id)) {
+            resultMap.set(task.scene_id, { ...task, status: "failed", error: "Timed out after 5 minutes" });
+          }
+        }
       }
 
-      console.log(`[hero] Job ${jobId}: completed — ${completed.length}/${activeTasks.length} scenes`);
+      // Merge results into full scene list
+      const mergedScenes = fullScenes.map(s => resultMap.get(s.scene_id) || s);
+      const completedCount = mergedScenes.filter(s => s.status === "completed" && s.video_url).length;
+
+      console.log(`[hero] Job ${jobId}: completed — ${completedCount}/${mergedScenes.length} scenes`);
 
       if (callbackUrl) {
         try {
@@ -685,12 +696,12 @@ app.post("/generate-hero-scenes", async (req, res) => {
               step: "hero_scenes",
               status: "completed",
               output: {
-                scenes: completed,
+                scenes: mergedScenes,
                 status: "completed",
                 tasks_started: activeTasks.length,
-                total_requested: scenes.length,
+                total_requested: mergedScenes.length,
               },
-              cost_cents: completed.length * 5, // ~$0.05 per Runway clip
+              cost_cents: completedCount * 5,
             }),
           });
         } catch (err) {
@@ -704,12 +715,7 @@ app.post("/generate-hero-scenes", async (req, res) => {
           await fetch(callbackUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId,
-              step: "hero_scenes",
-              status: "failed",
-              error: String(err),
-            }),
+            body: JSON.stringify({ projectId, step: "hero_scenes", status: "failed", error: String(err) }),
           });
         } catch {}
       }
