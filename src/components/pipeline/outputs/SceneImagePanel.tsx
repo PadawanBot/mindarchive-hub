@@ -79,34 +79,28 @@ export function SceneImagePanel({ scenes: initialScenes, projectId, onScenesChan
     try {
       const uploadRes = await fetch("/api/assets/manual-upload", { method: "POST", body: formData });
       const uploadData = await uploadRes.json();
-      if (!uploadData.success || !uploadData.data?.url) return;
 
-      // Update step output with the uploaded image URL
-      const updatedScenes = scenes.map(s =>
+      if (!uploadData.success || !uploadData.data?.url) {
+        console.error("Upload failed:", uploadData.error || "No URL returned");
+        setScenes(prev => prev.map(s =>
+          s.scene_id === scene.scene_id ? { ...s, error: `Upload failed: ${uploadData.error || "unknown error"}` } : s
+        ));
+        return;
+      }
+
+      // manual-upload already patches step output (scenes[] + images[]),
+      // just update local state to reflect the change
+      setScenes(prev => prev.map(s =>
         s.scene_id === scene.scene_id
           ? { ...s, image_url: uploadData.data.url, status: "completed" as const, error: undefined }
           : s
-      );
-
-      await fetch("/api/pipeline/step/update-output", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: projectId,
-          step: "image_generation",
-          output_update: {
-            scenes: updatedScenes,
-            images: updatedScenes.filter(s => s.status === "completed" && s.image_url).map(s => ({
-              url: s.image_url!, prompt: s.prompt, revised_prompt: s.revised_prompt || "", stored: true,
-            })),
-          },
-        }),
-      });
-
-      setScenes(updatedScenes);
+      ));
       onScenesChanged?.();
     } catch (err) {
       console.error("Upload failed:", err);
+      setScenes(prev => prev.map(s =>
+        s.scene_id === scene.scene_id ? { ...s, error: `Upload error: ${String(err)}` } : s
+      ));
     }
   };
 

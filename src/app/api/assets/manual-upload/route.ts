@@ -126,19 +126,40 @@ export async function POST(request: Request) {
             modified_at: new Date().toISOString(),
           } as Record<string, unknown>);
         } else if (assetType === "dalle_image") {
-          // DALL-E images: assembler reads imageGen.images[].url
-          const images = Array.isArray(currentOutput.images) ? [...currentOutput.images] : [];
-          images.push({
-            prompt: `Manually uploaded: ${file.name}`,
-            url,
-            revised_prompt: slotName || file.name,
-            stored: true,
-            source: "manual",
-          });
-          await upsertStep(projectId, step, {
-            output: { ...currentOutput, status: "completed", images, generated: images.length, total_prompts: images.length },
-            modified_at: new Date().toISOString(),
-          } as Record<string, unknown>);
+          // DALL-E images: update scenes[] (new format) or images[] (legacy)
+          if (Array.isArray(currentOutput.scenes)) {
+            // New scene-mapped format: find scene by slot_name pattern "scenes[N].image_url"
+            const sceneIndexMatch = slotName?.match(/scenes\[(\d+)\]\.image_url/);
+            const scenes = [...currentOutput.scenes] as Record<string, unknown>[];
+            if (sceneIndexMatch) {
+              const idx = parseInt(sceneIndexMatch[1], 10);
+              if (idx >= 0 && idx < scenes.length) {
+                scenes[idx] = { ...scenes[idx], image_url: url, status: "completed", error: undefined };
+              }
+            }
+            // Rebuild legacy images[] for backwards compat
+            const images = scenes
+              .filter((s) => s.status === "completed" && typeof s.image_url === "string")
+              .map((s) => ({ url: s.image_url, prompt: s.prompt || "", revised_prompt: s.revised_prompt || "", stored: true }));
+            await upsertStep(projectId, step, {
+              output: { ...currentOutput, status: "completed", scenes, images, generated: images.length, total_prompts: scenes.length },
+              modified_at: new Date().toISOString(),
+            } as Record<string, unknown>);
+          } else {
+            // Legacy flat images[] format
+            const images = Array.isArray(currentOutput.images) ? [...currentOutput.images] : [];
+            images.push({
+              prompt: `Manually uploaded: ${file.name}`,
+              url,
+              revised_prompt: slotName || file.name,
+              stored: true,
+              source: "manual",
+            });
+            await upsertStep(projectId, step, {
+              output: { ...currentOutput, status: "completed", images, generated: images.length, total_prompts: images.length },
+              modified_at: new Date().toISOString(),
+            } as Record<string, unknown>);
+          }
         } else {
           // Generic fallback — use path-based patching
           const patchKey = slotName || slotKey;
