@@ -9,7 +9,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, error: "project_id required" }, { status: 400 });
     }
     const steps = await getStepsByProject(projectId);
-    return NextResponse.json({ success: true, data: steps });
+    return NextResponse.json({ success: true, data: steps }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+    });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }

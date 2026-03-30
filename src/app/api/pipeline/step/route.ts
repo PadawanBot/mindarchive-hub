@@ -91,13 +91,20 @@ export async function POST(request: Request) {
       const finalStatus = isSkipped ? "skipped" as const : "completed" as const;
 
       // Save step result
+      const outputKeys = result.output ? Object.keys(result.output) : [];
+      const outputSize = JSON.stringify(result.output || {}).length;
+      console.log(`[step] Saving ${step} for ${project_id}: status=${finalStatus}, outputKeys=[${outputKeys}], outputSize=${outputSize} chars`);
+
       const stepResult = await upsertStep(project_id, step, {
         status: finalStatus,
         output: result.output,
         cost_cents: result.cost_cents,
         duration_ms: durationMs,
         completed_at: new Date().toISOString(),
-      });
+        modified_at: new Date().toISOString(),
+      } as Record<string, unknown>);
+
+      console.log(`[step] Saved ${step}: outputSize=${JSON.stringify(stepResult.output || {}).length}`);
 
       // Apply project updates if any
       if (result.projectUpdates) {
