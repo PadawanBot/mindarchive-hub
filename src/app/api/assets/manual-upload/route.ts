@@ -6,9 +6,11 @@
  */
 import { NextResponse } from "next/server";
 import { uploadAsset } from "@/lib/storage";
-import { upsertAssetRecord } from "@/lib/asset-db";
+import { upsertAssetRecord, getPooledAssets } from "@/lib/asset-db";
 import { getStepsByProject, upsertStep } from "@/lib/store";
 import { patchStepOutput } from "@/lib/asset-patch";
+import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
+import { reconcilePooledAssets } from "@/lib/pipeline/reconcile-pooled-assets";
 
 export const maxDuration = 30;
 
@@ -70,10 +72,52 @@ export async function POST(request: Request) {
     const step = ASSET_TYPE_TO_STEP[assetType];
     const prefix = ASSET_TYPE_SLOT_PREFIX[assetType];
 
-    // Build slot key from user input or generate one
-    const slotKey = slotName
-      ? slotName.trim()
-      : `${prefix}_manual_${Date.now()}`;
+    // Detect whether this is a scene-based upload before visual_direction exists
+    const isSceneBased = assetType === "dalle_image" || assetType === "runway_video";
+    let pooled = false;
+
+    let slotKey: string;
+    if (slotName) {
+      slotKey = slotName.trim();
+    } else if (isSceneBased) {
+      // Check if visual_direction has completed — if not, pool the asset
+      const steps = await getStepsByProject(projectId);
+      const vdStep = steps.find(s => s.step === "visual_direction" && s.status === "completed");
+      if (!vdStep) {
+        // No visual direction yet — pool the asset for later reconciliation
+        slotKey = `__pool__${Date.now()}`;
+        pooled = true;
+      } else {
+        // Visual direction exists — auto-assign to next available pending scene
+        const visuals = (vdStep.output as { visuals?: string })?.visuals || "";
+        const scenes = assetType === "dalle_image"
+          ? parseDalleScenes(visuals).map(s => ({ ...s, image_url: s.image_url }))
+          : parseRunwayScenes(visuals).map(s => ({ ...s, video_url: s.video_url }));
+        // Find first pending scene not already filled
+        const stepData = steps.find(s => s.step === step);
+        const existingScenes = (stepData?.output as { scenes?: { status?: string }[] })?.scenes || [];
+        const urlField = assetType === "runway_video" ? "video_url" : "image_url";
+        let assignedIndex = -1;
+        for (let i = 0; i < scenes.length; i++) {
+          const existing = existingScenes[i] as Record<string, unknown> | undefined;
+          if (!existing || existing.status !== "completed" || !existing[urlField]) {
+            assignedIndex = i;
+            break;
+          }
+        }
+        if (assignedIndex >= 0) {
+          slotKey = `scenes[${assignedIndex}].${urlField}`;
+        } else {
+          slotKey = `__pool__${Date.now()}`;
+          pooled = true;
+        }
+      }
+    } else if (assetType === "voiceover") {
+      // Deterministic key for voiceover — makes prepare-route skip trivial
+      slotKey = "audio_url";
+    } else {
+      slotKey = `${prefix}_manual_${Date.now()}`;
+    }
 
     // Build storage filename — sanitize slotKey to remove brackets/dots for storage path
     const ext = file.name.split(".").pop() || "bin";
@@ -106,13 +150,21 @@ export async function POST(request: Request) {
     });
 
     // Patch step output so the assembler/audit can find the uploaded asset
-    if (step !== "manual") {
+    // Skip patching for pooled assets — they'll be reconciled when prepare runs
+    if (step !== "manual" && !pooled) {
       try {
         const steps = await getStepsByProject(projectId);
         const existing = steps.find((s) => s.step === step);
         const currentOutput = (existing?.output || {}) as Record<string, unknown>;
 
-        if (assetType === "runway_video") {
+        if (assetType === "voiceover") {
+          // Voiceover: write deterministic output so prepare route skips worker
+          await upsertStep(projectId, step, {
+            status: "completed",
+            output: { ...currentOutput, audio_url: url, source: "manual", status: "completed" },
+            modified_at: new Date().toISOString(),
+          } as Record<string, unknown>);
+        } else if (assetType === "runway_video") {
           // Hero scenes: update SceneVideo[] (new format) or legacy scenes[]
           if (Array.isArray(currentOutput.scenes) && (currentOutput.scenes as Record<string, unknown>[])[0]?.scene_id != null) {
             // New SceneVideo format: find scene by slot_name pattern "scenes[N].video_url"
@@ -201,6 +253,7 @@ export async function POST(request: Request) {
         slot_key: slotKey,
         filename: safeName,
         asset_type: assetType,
+        pooled,
       },
     });
   } catch (error) {

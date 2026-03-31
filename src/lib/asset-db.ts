@@ -133,6 +133,49 @@ export async function getAssetById(assetId: string): Promise<AssetRow | null> {
 }
 
 /**
+ * Get pooled (pre-visual-direction) assets for a project + step.
+ * Pooled assets have slot_key starting with "__pool__".
+ */
+export async function getPooledAssets(projectId: string, step: string): Promise<AssetRow[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+
+  const { data, error } = await sb
+    .from("assets")
+    .select("*")
+    .eq("project_id", projectId)
+    .eq("step", step)
+    .eq("source", "manual")
+    .like("slot_key", "__pool__%")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[asset-db] getPooledAssets failed:", error.message);
+    return [];
+  }
+  return (data || []) as AssetRow[];
+}
+
+/**
+ * Update an asset's slot_key (used during pool reconciliation and re-assignment).
+ */
+export async function updateAssetSlotKey(assetId: string, newSlotKey: string): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb) return false;
+
+  const { error } = await sb
+    .from("assets")
+    .update({ slot_key: newSlotKey })
+    .eq("id", assetId);
+
+  if (error) {
+    console.error("[asset-db] updateAssetSlotKey failed:", error.message);
+    return false;
+  }
+  return true;
+}
+
+/**
  * Delete all asset records for a given project + step.
  * Used when a step is re-run to clear stale records before new ones are created.
  */

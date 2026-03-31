@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getById, update, getAllSettings, upsertStep, getStepsByProject } from "@/lib/store";
 import { buildPrompt } from "@/lib/pipeline/prompts";
 import { getStepDef, canRunStep, getNextStep } from "@/lib/pipeline/steps";
-import { deleteAssetsByStep } from "@/lib/asset-db";
+import { deleteAssetsByStep, getPooledAssets } from "@/lib/asset-db";
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, SceneImage, SceneVideo } from "@/types";
 import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
 import { extractNarration } from "@/lib/pipeline/extract-narration";
+import { reconcilePooledAssets } from "@/lib/pipeline/reconcile-pooled-assets";
 
 export const maxDuration = 15;
 
@@ -148,6 +149,27 @@ export async function POST(request: Request) {
         const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
         const allScenes = parseDalleScenes(visuals);
 
+        // Reconcile pooled assets (uploaded before visual_direction ran)
+        const pooledImageAssets = await getPooledAssets(project_id, "image_generation");
+        if (pooledImageAssets.length > 0) {
+          const reconciled = await reconcilePooledAssets(project_id, "image_generation", allScenes, pooledImageAssets);
+          for (const m of reconciled.matched) {
+            const scene = allScenes.find(s => s.scene_id === m.sceneId);
+            if (scene) {
+              scene.image_url = m.url;
+              scene.status = "completed";
+            }
+          }
+          // Persist reconciled scenes to step output so resume logic picks them up
+          if (reconciled.matched.length > 0) {
+            await upsertStep(project_id, "image_generation", {
+              output: { scenes: allScenes, status: "running", total_prompts: allScenes.length, generated: reconciled.matched.length },
+              modified_at: new Date().toISOString(),
+            } as Record<string, unknown>);
+            console.log(`[prepare] image_generation: reconciled ${reconciled.matched.length} pooled assets`);
+          }
+        }
+
         // Resume: check existing step output for completed scenes
         const imageStep = existingSteps.find(s => s.step === "image_generation");
         const imageOutput = imageStep?.output as { scenes?: SceneImage[]; images?: { url: string; prompt: string; revised_prompt?: string }[] } | undefined;
@@ -256,6 +278,24 @@ export async function POST(request: Request) {
         });
       }
 
+      // Check for manual voiceover upload — skip worker if present
+      if (step === "voiceover_generation") {
+        const voiceStep = existingSteps.find(s => s.step === "voiceover_generation");
+        const voiceOutput = voiceStep?.output as { audio_url?: string; source?: string } | undefined;
+        if (voiceOutput?.audio_url && voiceOutput?.source === "manual") {
+          console.log("[prepare] voiceover_generation: manual upload found, skipping worker");
+          await upsertStep(project_id, "voiceover_generation", {
+            status: "completed",
+            output: voiceOutput,
+            cost_cents: 0,
+          } as Record<string, unknown>);
+          return NextResponse.json({
+            success: true,
+            data: { needs_llm: false, already_complete: true, step, project_id },
+          });
+        }
+      }
+
       // Route voiceover_generation to EC2 worker (ElevenLabs streaming exceeds Vercel 60s timeout)
       if (step === "voiceover_generation" && workerUrl) {
         const elevenLabsKey = settings.elevenlabs_key;
@@ -332,7 +372,7 @@ export async function POST(request: Request) {
           // Extract RUNWAY scenes from visual direction using shared parser
           const visualStep = existingSteps.find(s => s.step === "visual_direction");
           const visuals = (visualStep?.output as { visuals?: string })?.visuals || "";
-          const allScenes = parseRunwayScenes(visuals);
+          let allScenes = parseRunwayScenes(visuals);
 
           // Fallback: extract from script if no RUNWAY tags in visual direction
           if (allScenes.length === 0) {
@@ -348,6 +388,26 @@ export async function POST(request: Request) {
                 video_url: null, task_id: null, status: "pending",
               });
             });
+          }
+
+          // Reconcile pooled assets (uploaded before visual_direction ran)
+          const pooledHeroAssets = await getPooledAssets(project_id, "hero_scenes");
+          if (pooledHeroAssets.length > 0) {
+            const reconciled = await reconcilePooledAssets(project_id, "hero_scenes", allScenes, pooledHeroAssets);
+            for (const m of reconciled.matched) {
+              const scene = allScenes.find(s => s.scene_id === m.sceneId);
+              if (scene) {
+                scene.video_url = m.url;
+                scene.status = "completed";
+              }
+            }
+            if (reconciled.matched.length > 0) {
+              await upsertStep(project_id, "hero_scenes", {
+                output: { scenes: allScenes, status: "running", total_requested: allScenes.length },
+                modified_at: new Date().toISOString(),
+              } as Record<string, unknown>);
+              console.log(`[prepare] hero_scenes: reconciled ${reconciled.matched.length} pooled assets`);
+            }
           }
 
           // Resume: check existing step output for completed scenes

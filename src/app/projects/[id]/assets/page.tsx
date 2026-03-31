@@ -160,10 +160,15 @@ function UploadModal({ projectId, defaultAssetType, onClose, onSuccess }: Upload
       }
 
       setProgress(100);
+      const wasPooled = data.data?.pooled === true;
 
       // Brief delay to show 100% before closing
       setTimeout(() => {
         setUploading(false);
+        if (wasPooled) {
+          setError(""); // clear any prior error
+          alert("Asset pooled! It will be assigned to a scene slot after Visual Direction completes.");
+        }
         onSuccess();
         onClose();
       }, 400);
@@ -515,6 +520,196 @@ function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
   );
 }
 
+// ─── Asset Reassignment Panel ───────────────────────────────────────────────
+
+interface PoolScene {
+  scene_id: number;
+  label: string;
+  prompt: string;
+  image_url?: string | null;
+  video_url?: string | null;
+  status: string;
+}
+
+interface ReassignmentPanelProps {
+  projectId: string;
+  step: "image_generation" | "hero_scenes";
+  onMappingApplied: () => void;
+}
+
+function AssetReassignmentPanel({ projectId, step, onMappingApplied }: ReassignmentPanelProps) {
+  const [pooledAssets, setPooledAssets] = useState<AssetRow[]>([]);
+  const [manualAssets, setManualAssets] = useState<AssetRow[]>([]);
+  const [scenes, setScenes] = useState<PoolScene[]>([]);
+  const [vdReady, setVdReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [mappings, setMappings] = useState<Record<string, number>>({});
+
+  const isHero = step === "hero_scenes";
+  const label = isHero ? "Hero Scenes" : "DALL-E Images";
+  const urlField = isHero ? "video_url" : "image_url";
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/assets/pool-status?project_id=${projectId}&step=${step}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return;
+        setPooledAssets(d.data.pooled_assets || []);
+        setManualAssets(d.data.manual_assets || []);
+        setScenes(d.data.scenes || []);
+        setVdReady(d.data.visual_direction_ready);
+
+        // Initialize mappings: pooled assets get auto-assigned by position to pending scenes
+        const pending = (d.data.scenes || []).filter(
+          (s: PoolScene) => {
+            const url = isHero ? s.video_url : s.image_url;
+            return s.status !== "completed" || !url;
+          },
+        );
+        const init: Record<string, number> = {};
+        (d.data.pooled_assets || []).forEach((a: AssetRow, i: number) => {
+          if (i < pending.length) init[a.id] = pending[i].scene_id;
+        });
+        setMappings(init);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [projectId, step, urlField]);
+
+  const applyMappings = async () => {
+    const mappingList = Object.entries(mappings)
+      .filter(([, sceneId]) => sceneId > 0)
+      .map(([asset_id, scene_id]) => ({ asset_id, scene_id }));
+
+    if (mappingList.length === 0) return;
+
+    setApplying(true);
+    try {
+      const res = await fetch("/api/assets/reassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, step, mappings: mappingList }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onMappingApplied();
+        // Reload state
+        setPooledAssets([]);
+      }
+    } catch {}
+    setApplying(false);
+  };
+
+  if (loading) return null;
+
+  // Nothing to show if no pooled or manual assets
+  const relevantAssets = pooledAssets.length > 0 ? pooledAssets : manualAssets.filter(
+    a => a.slot_key?.startsWith("__pool__"),
+  );
+  if (relevantAssets.length === 0) return null;
+
+  // Pre-visual-direction: just show info
+  if (!vdReady) {
+    return (
+      <Card>
+        <CardContent className="py-4">
+          <div className="flex items-center gap-3">
+            <div className="shrink-0 w-8 h-8 rounded-full bg-blue-500/20 text-blue-300 flex items-center justify-center">
+              <Upload className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">
+                {relevantAssets.length} {label.toLowerCase()} pooled
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Assets will be assigned to scene slots after Visual Direction completes.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Post-visual-direction: show mapping UI
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2 text-base">
+        <Upload className="w-4 h-4 text-blue-400" />
+        Assign {label} to Scenes
+        <Badge variant="outline" className="text-xs">
+          {relevantAssets.length} asset{relevantAssets.length !== 1 ? "s" : ""} / {scenes.length} scene{scenes.length !== 1 ? "s" : ""}
+        </Badge>
+      </CardTitle>
+      <CardContent className="mt-3 space-y-3">
+        {relevantAssets.map((asset) => (
+          <div
+            key={asset.id}
+            className="flex items-center gap-3 p-3 rounded-lg border border-muted-foreground/10 bg-muted/20"
+          >
+            {/* Asset preview */}
+            <div className="shrink-0 w-16 h-12 bg-muted rounded overflow-hidden flex items-center justify-center">
+              {asset.type === "image" && asset.url ? (
+                <img src={asset.url} alt="" className="w-full h-full object-cover" />
+              ) : asset.type === "video" ? (
+                <FileVideo className="w-5 h-5 text-muted-foreground" />
+              ) : (
+                <FolderOpen className="w-5 h-5 text-muted-foreground" />
+              )}
+            </div>
+
+            {/* Asset info */}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate">{asset.filename}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {formatSize(asset.size_bytes)} &middot; {formatDate(asset.created_at)}
+              </p>
+            </div>
+
+            {/* Scene dropdown */}
+            <div className="shrink-0 w-48">
+              <Select
+                value={String(mappings[asset.id] || "")}
+                onChange={(e) =>
+                  setMappings(prev => ({ ...prev, [asset.id]: Number(e.target.value) }))
+                }
+              >
+                <option value="">Unassigned</option>
+                {scenes.map((scene) => {
+                  const filled = isHero ? scene.video_url : scene.image_url;
+                  return (
+                    <option key={scene.scene_id} value={scene.scene_id}>
+                      Scene {scene.scene_id}: {scene.label || scene.prompt.slice(0, 40)}
+                      {filled ? " (filled)" : ""}
+                    </option>
+                  );
+                })}
+              </Select>
+            </div>
+          </div>
+        ))}
+
+        <div className="flex justify-end pt-1">
+          <Button
+            size="sm"
+            onClick={applyMappings}
+            disabled={applying || Object.values(mappings).filter(v => v > 0).length === 0}
+          >
+            {applying ? (
+              <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+            ) : (
+              <Check className="w-4 h-4 mr-1.5" />
+            )}
+            {applying ? "Applying..." : "Apply Mapping"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function AssetLibraryPage() {
@@ -647,6 +842,10 @@ export default function AssetLibraryPage() {
           </button>
         ))}
       </div>
+
+      {/* Asset Re-assignment Panels (pooled assets → scene slots) */}
+      <AssetReassignmentPanel projectId={projectId} step="image_generation" onMappingApplied={loadData} />
+      <AssetReassignmentPanel projectId={projectId} step="hero_scenes" onMappingApplied={loadData} />
 
       {/* Hero Scenes — prompt reference + per-slot upload */}
       <HeroScenesPanel projectId={projectId} onAssetsChanged={loadData} />
