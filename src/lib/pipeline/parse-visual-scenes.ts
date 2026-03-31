@@ -76,6 +76,40 @@ export function parseDalleScenes(visualsRaw: string): SceneImage[] {
   }
 }
 
+export interface StockScene {
+  scene_id: number;
+  label: string;
+  query: string;
+  videos: { id: number; url: string; file_url: string; thumbnail: string; duration: number }[];
+}
+
+/**
+ * Parse visual direction output and return all STOCK scenes with search queries.
+ */
+export function parseStockScenes(visualsRaw: string): StockScene[] {
+  try {
+    const scenes = extractSceneArray(visualsRaw);
+    return scenes
+      .filter((s) => String(s.tag || s.tag_type || "").toUpperCase() === "STOCK")
+      .map((s): StockScene => {
+        const pexels = Array.isArray(s.pexels_keywords) && (s.pexels_keywords as string[]).length > 0
+          ? String((s.pexels_keywords as string[])[0])
+          : null;
+        const query = pexels
+          || (typeof s.stock_keywords === "string" ? s.stock_keywords : "")
+          || String(s.label || "atmospheric footage");
+        return {
+          scene_id: typeof s.scene_id === "number" ? s.scene_id : 0,
+          label: (s.label as string) || "",
+          query,
+          videos: [],
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 export interface MotionGraphicScene {
   scene_id: number;
   label: string;

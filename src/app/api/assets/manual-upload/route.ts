@@ -6,11 +6,9 @@
  */
 import { NextResponse } from "next/server";
 import { uploadAsset } from "@/lib/storage";
-import { upsertAssetRecord, getPooledAssets } from "@/lib/asset-db";
+import { upsertAssetRecord } from "@/lib/asset-db";
 import { getStepsByProject, upsertStep } from "@/lib/store";
 import { patchStepOutput } from "@/lib/asset-patch";
-import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
-import { reconcilePooledAssets } from "@/lib/pipeline/reconcile-pooled-assets";
 
 export const maxDuration = 30;
 
@@ -72,45 +70,58 @@ export async function POST(request: Request) {
     const step = ASSET_TYPE_TO_STEP[assetType];
     const prefix = ASSET_TYPE_SLOT_PREFIX[assetType];
 
-    // Detect whether this is a scene-based upload before visual_direction exists
+    // Detect whether this is a scene-based upload and find the right slot
     const isSceneBased = assetType === "dalle_image" || assetType === "runway_video";
+    const isStockBased = assetType === "stock_video";
     let pooled = false;
 
     let slotKey: string;
     if (slotName) {
       slotKey = slotName.trim();
     } else if (isSceneBased) {
-      // Check if visual_direction has completed — if not, pool the asset
+      // Use initialized step output (created after visual_direction) to find the next pending scene
       const steps = await getStepsByProject(projectId);
-      const vdStep = steps.find(s => s.step === "visual_direction" && s.status === "completed");
-      if (!vdStep) {
-        // No visual direction yet — pool the asset for later reconciliation
+      const stepData = steps.find(s => s.step === step);
+      const existingScenes = (stepData?.output as { scenes?: Record<string, unknown>[] })?.scenes || [];
+      const urlField = assetType === "runway_video" ? "video_url" : "image_url";
+
+      let assignedIndex = -1;
+      for (let i = 0; i < existingScenes.length; i++) {
+        if (existingScenes[i].status !== "completed" || !existingScenes[i][urlField]) {
+          assignedIndex = i;
+          break;
+        }
+      }
+      if (assignedIndex >= 0) {
+        slotKey = `scenes[${assignedIndex}].${urlField}`;
+      } else if (existingScenes.length === 0) {
+        // No slots initialized yet (visual_direction hasn't run) — pool it
         slotKey = `__pool__${Date.now()}`;
         pooled = true;
       } else {
-        // Visual direction exists — auto-assign to next available pending scene
-        const visuals = (vdStep.output as { visuals?: string })?.visuals || "";
-        const scenes = assetType === "dalle_image"
-          ? parseDalleScenes(visuals).map(s => ({ ...s, image_url: s.image_url }))
-          : parseRunwayScenes(visuals).map(s => ({ ...s, video_url: s.video_url }));
-        // Find first pending scene not already filled
-        const stepData = steps.find(s => s.step === step);
-        const existingScenes = (stepData?.output as { scenes?: { status?: string }[] })?.scenes || [];
-        const urlField = assetType === "runway_video" ? "video_url" : "image_url";
-        let assignedIndex = -1;
-        for (let i = 0; i < scenes.length; i++) {
-          const existing = existingScenes[i] as Record<string, unknown> | undefined;
-          if (!existing || existing.status !== "completed" || !existing[urlField]) {
-            assignedIndex = i;
-            break;
-          }
+        // All slots filled — pool as overflow
+        slotKey = `__pool__${Date.now()}`;
+        pooled = true;
+      }
+    } else if (isStockBased) {
+      // Use initialized stock_footage output to find the next empty footage slot
+      const steps = await getStepsByProject(projectId);
+      const stockData = steps.find(s => s.step === "stock_footage");
+      const footage = (stockData?.output as { footage?: Record<string, unknown>[] })?.footage || [];
+
+      let assignedIndex = -1;
+      for (let i = 0; i < footage.length; i++) {
+        const videos = footage[i].videos as unknown[] | undefined;
+        if (!videos || videos.length === 0) {
+          assignedIndex = i;
+          break;
         }
-        if (assignedIndex >= 0) {
-          slotKey = `scenes[${assignedIndex}].${urlField}`;
-        } else {
-          slotKey = `__pool__${Date.now()}`;
-          pooled = true;
-        }
+      }
+      if (assignedIndex >= 0) {
+        slotKey = `footage[${assignedIndex}].video`;
+      } else {
+        // No empty slots or no slots initialized — use timestamp key
+        slotKey = `${prefix}_manual_${Date.now()}`;
       }
     } else if (assetType === "voiceover") {
       // Deterministic key for voiceover — makes prepare-route skip trivial
@@ -231,21 +242,42 @@ export async function POST(request: Request) {
             } as Record<string, unknown>);
           }
         } else if (assetType === "stock_video") {
-          // Stock footage: append to footage[] array in the format the manifest builder expects
+          // Stock footage: insert into initialized footage slot or append
           const footage = Array.isArray(currentOutput.footage) ? [...currentOutput.footage] as Record<string, unknown>[] : [];
-          footage.push({
-            query: `manual: ${file.name}`,
-            videos: [{
-              id: Date.now(),
-              url,
-              file_url: url,
-              thumbnail: "",
-              duration: 10, // default estimate — assembler will use actual duration from ffprobe
-            }],
-            source: "manual",
-          });
+          const slotMatch = slotKey.match(/^footage\[(\d+)\]\.video$/);
+          if (slotMatch) {
+            const idx = parseInt(slotMatch[1], 10);
+            if (idx >= 0 && idx < footage.length) {
+              // Insert into initialized slot
+              footage[idx] = {
+                ...footage[idx],
+                videos: [{
+                  id: Date.now(),
+                  url,
+                  file_url: url,
+                  thumbnail: "",
+                  duration: 10,
+                }],
+                source: "manual",
+              };
+            }
+          } else {
+            // No matching slot — append as new footage group
+            footage.push({
+              query: `manual: ${file.name}`,
+              videos: [{
+                id: Date.now(),
+                url,
+                file_url: url,
+                thumbnail: "",
+                duration: 10,
+              }],
+              source: "manual",
+            });
+          }
+          const currentStatus = currentOutput.status === "completed" ? "completed" : "completed";
           await upsertStep(projectId, step, {
-            output: { ...currentOutput, status: "completed", footage },
+            output: { ...currentOutput, status: currentStatus, footage },
             modified_at: new Date().toISOString(),
           } as Record<string, unknown>);
         } else {

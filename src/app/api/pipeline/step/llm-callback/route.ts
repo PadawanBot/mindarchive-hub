@@ -3,6 +3,7 @@ import { getById, update, upsertStep, getStepsByProject } from "@/lib/store";
 import { getStepDef, getNextStep, PIPELINE_STEPS } from "@/lib/pipeline/steps";
 import { buildSaveData } from "@/lib/pipeline/prompts";
 import { syncStepAssets } from "@/lib/asset-sync";
+import { initializeAssetSlots } from "@/lib/pipeline/initialize-asset-slots";
 import type { Project, PipelineStep } from "@/types";
 import { onProjectComplete } from "@/lib/pipeline/on-project-complete";
 
@@ -86,6 +87,16 @@ export async function POST(request: Request) {
 
     // Auto-sync asset records
     await syncStepAssets(projectId, step, saveData.output);
+
+    // After visual_direction completes, initialize downstream asset step slots
+    if (step === "visual_direction") {
+      try {
+        const visuals = (saveData.output as { visuals?: string })?.visuals || "";
+        await initializeAssetSlots(projectId, visuals);
+      } catch (err) {
+        console.warn("[llm-callback] Asset slot initialization failed (non-fatal):", err);
+      }
+    }
 
     // Check if all steps done
     const updatedSteps = await getStepsByProject(projectId);

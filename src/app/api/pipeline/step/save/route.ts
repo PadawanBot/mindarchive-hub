@@ -5,6 +5,7 @@ import { buildSaveData } from "@/lib/pipeline/prompts";
 import { executors } from "@/lib/pipeline/executors";
 import { onProjectComplete } from "@/lib/pipeline/on-project-complete";
 import { syncStepAssets } from "@/lib/asset-sync";
+import { initializeAssetSlots } from "@/lib/pipeline/initialize-asset-slots";
 import type { Project, PipelineStep } from "@/types";
 
 export const maxDuration = 30;
@@ -44,6 +45,16 @@ export async function POST(request: Request) {
 
     // Auto-sync asset records (best-effort)
     await syncStepAssets(project_id, step, saveData.output);
+
+    // After visual_direction completes, initialize downstream asset step slots
+    if (step === "visual_direction") {
+      try {
+        const visuals = (saveData.output as { visuals?: string })?.visuals || "";
+        await initializeAssetSlots(project_id, visuals);
+      } catch (err) {
+        console.warn("[save] Asset slot initialization failed (non-fatal):", err);
+      }
+    }
 
     // Check if all done.
     // Guard: only fire if no later steps are un-started (prevents premature
