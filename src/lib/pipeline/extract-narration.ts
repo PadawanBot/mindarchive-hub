@@ -63,10 +63,13 @@ export function extractNarration(script: string): string {
   }
 
   // ── Strategy 2: NARRATION (V.O.) blocks without gold standard wrapper ────
-  // Search the full original text. Works for scripts that use the block format
-  // but were generated without the FINAL POLISHED SCRIPT header.
+  // Search the full original text. Strip bold/italic markdown first so that
+  // "**NARRATION (V.O.):**" (common in markdown-format scripts) is matched.
   {
-    const blocks = extractBlocks(script);
+    const scriptNoBold = script
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/\*([^*\n]+)\*/g, "$1");
+    const blocks = extractBlocks(scriptNoBold);
     if (blocks.length > 0) return cleanBlocks(blocks);
   }
 
