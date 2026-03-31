@@ -351,27 +351,31 @@ export async function POST(request: Request) {
           }
 
           // Resume: check existing step output for completed scenes
+          // Treats ANY scene with a video_url as completed (regardless of status field)
+          // to prevent re-submitting manually uploaded assets to Runway.
           const heroStep = existingSteps.find(s => s.step === "hero_scenes");
           const heroOutput = heroStep?.output as { scenes?: SceneVideo[] } | undefined;
           const existingHeroScenes = heroOutput?.scenes || [];
           const completedHeroMap = new Map(
-            existingHeroScenes.filter(s => s.status === "completed" && s.video_url).map(s => [s.scene_id, s])
+            existingHeroScenes.filter(s => s.video_url).map(s => [s.scene_id, s])
           );
 
-          // Also check legacy format — match by video_url presence, prompt text, or section label
-          if (completedHeroMap.size === 0 && Array.isArray(heroOutput?.scenes)) {
+          // Also check legacy/manual-upload format (may lack scene_id or status)
+          if (Array.isArray(heroOutput?.scenes)) {
             const legacyScenes = heroOutput!.scenes as unknown as { scene_id?: number; section?: string; label?: string; promptText?: string; prompt?: string; video_url?: string; status?: string }[];
             // First pass: match by scene_id if available
             for (const ls of legacyScenes) {
-              if (ls.video_url && ls.scene_id != null) {
+              if (ls.video_url && ls.scene_id != null && ls.scene_id > 0) {
                 const scene = allScenes.find(s => s.scene_id === ls.scene_id);
-                if (scene) completedHeroMap.set(scene.scene_id, { ...scene, status: "completed", video_url: ls.video_url });
+                if (scene && !completedHeroMap.has(scene.scene_id)) {
+                  completedHeroMap.set(scene.scene_id, { ...scene, status: "completed", video_url: ls.video_url });
+                }
               }
             }
             // Second pass: match remaining by section/label or prompt text
             for (const scene of allScenes) {
               if (completedHeroMap.has(scene.scene_id)) continue;
-              const match = legacyScenes.find(ls => ls.video_url && !completedHeroMap.has(ls.scene_id ?? -1) && (
+              const match = legacyScenes.find(ls => ls.video_url && !Array.from(completedHeroMap.values()).some(c => c.video_url === ls.video_url) && (
                 (ls.promptText?.trim() === scene.prompt.trim()) ||
                 (ls.prompt?.trim() === scene.prompt.trim()) ||
                 (ls.section?.trim() === scene.label.trim()) ||
@@ -381,13 +385,14 @@ export async function POST(request: Request) {
                 completedHeroMap.set(scene.scene_id, { ...scene, status: "completed", video_url: match.video_url! });
               }
             }
-            // Third pass: match any remaining scenes by array position (manual uploads without metadata)
+            // Third pass: match remaining scenes by position (manual uploads without metadata)
             const unmatchedScenes = allScenes.filter(s => !completedHeroMap.has(s.scene_id));
             const unmatchedLegacy = legacyScenes.filter(ls => ls.video_url && !Array.from(completedHeroMap.values()).some(c => c.video_url === ls.video_url));
             for (let i = 0; i < Math.min(unmatchedScenes.length, unmatchedLegacy.length); i++) {
               completedHeroMap.set(unmatchedScenes[i].scene_id, { ...unmatchedScenes[i], status: "completed", video_url: unmatchedLegacy[i].video_url! });
             }
           }
+          console.log(`[prepare] hero_scenes: ${completedHeroMap.size}/${allScenes.length} scenes already have video_url`);
 
           // Merge completed scenes
           const mergedScenes: SceneVideo[] = allScenes.map(scene => {
