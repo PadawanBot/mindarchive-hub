@@ -1,33 +1,51 @@
 /**
  * Extract pure narration text from a script for TTS / voiceover generation.
  *
- * Two extraction strategies tried in order:
+ * Three strategies tried in order:
  *
- * 1. GOLD STANDARD — Scripts with "NARRATION (V.O.):" blocks (Step 8 format):
- *    Slices to "FINAL POLISHED SCRIPT", cuts footer markers, extracts blocks.
- *    Most precise — discards all non-narration content by construction.
+ * 1. GOLD STANDARD — Script has both "FINAL POLISHED SCRIPT" header AND
+ *    "NARRATION (V.O.):" blocks. Slice to the header, cut footers, extract blocks.
  *
- * 2. FALLBACK STRIP — Any other format (markdown, older prompts, etc.):
- *    Strips known non-narration patterns from the FULL original text.
- *    Minimal stripping only — avoids greedy cuts that wipe content when
- *    section markers appear mid-script rather than as footers.
+ * 2. NARRATION BLOCKS — Script has "NARRATION (V.O.):" blocks but no gold
+ *    standard wrapper (e.g. KMP Anime format). Extract blocks from full text.
  *
- * Used by BOTH prepare/route.ts AND executors.ts to ensure consistent output.
+ * 3. FALLBACK STRIP — No NARRATION (V.O.) blocks at all (markdown, older formats).
+ *    Strip known non-narration patterns from the full original text.
+ *
+ * Critical: end-marker cuts (PRODUCTION NOTES, etc.) only apply in Strategy 1
+ * because those markers only reliably appear as footers in the gold standard format.
+ * In other formats they can appear mid-script, which would destroy the content.
  */
 export function extractNarration(script: string): string {
-  // ── Strategy 1: Gold standard NARRATION (V.O.) block extraction ──────────
-  // Only applies when the script uses the gold standard Step 8 format.
-  {
-    let text = script;
-
-    // Slice to "FINAL POLISHED SCRIPT" — skip editorial log
-    const finalScriptIdx = text.indexOf("FINAL POLISHED SCRIPT");
-    if (finalScriptIdx !== -1) {
-      text = text.slice(finalScriptIdx);
+  // Helper: extract NARRATION (V.O.) blocks from a text chunk
+  function extractBlocks(text: string): string[] {
+    const blocks: string[] = [];
+    const re =
+      /NARRATION \(V\.O\.\):\s*\n([\s\S]*?)(?=\[|(?:\n\n+[A-Z][─\u2500]{3,}|\n\n+ACT )|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const block = m[1].trim();
+      if (block) blocks.push(block);
     }
+    return blocks;
+  }
 
-    // Slice before footer markers (only safe because these are always footers
-    // in the gold standard format, never mid-script)
+  function cleanBlocks(blocks: string[]): string {
+    let result = blocks.join("\n\n");
+    // Strip any visual tags that leaked into narration blocks
+    result = result.replace(
+      /\[(?:DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE|DELIVERY)[:\s][^\]]*\]/gi,
+      ""
+    );
+    return result.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // ── Strategy 1: Gold standard format ─────────────────────────────────────
+  // Only when "FINAL POLISHED SCRIPT" is present — that marker guarantees
+  // the footer markers (PRODUCTION NOTES, etc.) are safe to cut at.
+  if (script.includes("FINAL POLISHED SCRIPT")) {
+    let text = script.slice(script.indexOf("FINAL POLISHED SCRIPT"));
+
     const endMarkers = [
       "WORD COUNT VERIFICATION",
       "PRODUCTION NOTES",
@@ -37,45 +55,27 @@ export function extractNarration(script: string): string {
     ];
     for (const marker of endMarkers) {
       const idx = text.indexOf(marker);
-      if (idx !== -1) {
-        text = text.slice(0, idx);
-      }
+      if (idx !== -1) text = text.slice(0, idx);
     }
 
-    // Extract NARRATION (V.O.) blocks
-    const narrationBlocks: string[] = [];
-    const narrationRegex =
-      /NARRATION \(V\.O\.\):\s*\n([\s\S]*?)(?=\[|(?:\n\n+[A-Z][─\u2500]{3,}|\n\n+ACT )|$)/g;
-    let match: RegExpExecArray | null;
-    while ((match = narrationRegex.exec(text)) !== null) {
-      const block = match[1].trim();
-      if (block) narrationBlocks.push(block);
-    }
-
-    if (narrationBlocks.length > 0) {
-      // Found blocks — strip any stray visual tags and return
-      let result = narrationBlocks.join("\n\n");
-      result = result.replace(
-        /\[(?:DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL CUE|DELIVERY)[:\s][^\]]*\]/gi,
-        ""
-      );
-      return result.replace(/\n{3,}/g, "\n\n").trim();
-    }
+    const blocks = extractBlocks(text);
+    if (blocks.length > 0) return cleanBlocks(blocks);
   }
 
-  // ── Strategy 2: Fallback strip — applied to the FULL original text ────────
-  // Used when the script has no NARRATION (V.O.) blocks (markdown format, etc.).
-  // Only strip things we're certain are never narration:
-  //   - Visual direction tags [DALLE: ...], [RUNWAY: ...], etc.
-  //   - Markdown structure (headers, tables, bold/italic, HRs)
-  //   - WORD COUNT VERIFICATION footer (always at the very end)
-  //   - NARRATION (V.O.): labels (the label itself, not the content)
-  //   - Scene/act structural labels
-  // Do NOT aggressively cut at PRODUCTION NOTES — it can appear mid-script.
+  // ── Strategy 2: NARRATION (V.O.) blocks without gold standard wrapper ────
+  // Search the full original text. Works for scripts that use the block format
+  // but were generated without the FINAL POLISHED SCRIPT header.
+  {
+    const blocks = extractBlocks(script);
+    if (blocks.length > 0) return cleanBlocks(blocks);
+  }
+
+  // ── Strategy 3: Fallback strip ────────────────────────────────────────────
+  // No NARRATION (V.O.) blocks found. Strip known non-narration patterns
+  // from the full original text. Minimal stripping only.
   let text = script;
 
-  // Remove WORD COUNT VERIFICATION footer and everything after it
-  // (This is the only footer safe to cut greedy — it's always last)
+  // Remove WORD COUNT VERIFICATION footer and everything after
   text = text.replace(/\n*WORD COUNT VERIFICATION[\s\S]*/i, "");
 
   // Remove visual direction tags
@@ -84,7 +84,7 @@ export function extractNarration(script: string): string {
     ""
   );
 
-  // Remove structural labels (not their content)
+  // Remove structural labels
   text = text
     .replace(/^NARRATION\s*\(V\.O\.\)\s*:?\s*/gim, "")
     .replace(/^\[SCENE \d+[^\]]*\]\s*$/gm, "")
@@ -97,17 +97,16 @@ export function extractNarration(script: string): string {
   // Remove markdown structure
   text = text
     .replace(/^#{1,6}\s.*$/gm, "")
-    .replace(/^\|.*$/gm, "")             // table rows
-    .replace(/^---+$/gm, "")             // HR
-    .replace(/\*\*([^*]+)\*\*/g, "$1")   // bold
-    .replace(/\*([^*]+)\*/g, "$1");      // italic
+    .replace(/^\|.*$/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1");
 
-  // Remove metadata header lines (key: value pairs at the top)
+  // Remove metadata header lines
   text = text.replace(
     /^(Topic|Channel|Runtime target|Word target|Format)\s*:.*$/gim,
     ""
   );
 
-  // Normalize whitespace
   return text.replace(/\n{3,}/g, "\n\n").trim();
 }
