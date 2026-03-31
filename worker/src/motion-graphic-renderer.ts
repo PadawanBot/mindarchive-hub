@@ -302,26 +302,39 @@ function parseMotionGraphicSpec(specString: string, fallbackLabel?: string): Mot
 
   const layoutMatch = specString.match(/layout=(\w+)/);
 
-  const textMatch = specString.match(/\btext="([^"]+)"/);
+  // text="..." or text='...' (double or single quotes)
+  const textMatch = specString.match(/\btext=["']([^"']+)["']/);
   if (textMatch) {
     const parts = textMatch[1].split(" / ");
     spec.title = parts[0].trim();
-    if (parts[1]) spec.body = parts[1].trim();
+    if (parts[1]) spec.body = parts.slice(1).join(" / ").trim();
   }
 
-  const titleMatch = specString.match(/\btitle="([^"]+)"/);
+  // title="..." or title='...'
+  const titleMatch = specString.match(/\btitle=["']([^"']+)["']/);
   if (titleMatch) spec.title = titleMatch[1];
 
-  const itemsMatch = specString.match(/\bitems="([^"]+)"/);
+  // items="A | B | C"
+  const itemsMatch = specString.match(/\bitems=["']([^"']+)["']/);
   if (itemsMatch) {
     spec.bullets = itemsMatch[1].split("|").map((s) => s.trim()).filter(Boolean);
   }
 
-  const accentMatch = specString.match(/accent\s+\w+\s+(#[0-9a-fA-F]{6})/i);
-  if (accentMatch) spec.accentColor = accentMatch[1];
+  // Color extraction — Format 1: "accent teal #RRGGBB" / "near-black #RRGGBB"
+  const accentMatch1 = specString.match(/accent\s+\w+\s+(#[0-9a-fA-F]{6})/i);
+  if (accentMatch1) spec.accentColor = accentMatch1[1];
+  const bgMatch1 = specString.match(/near-black\s+(#[0-9a-fA-F]{6})/i);
+  if (bgMatch1) spec.backgroundColor = bgMatch1[1];
 
-  const bgMatch = specString.match(/near-black\s+(#[0-9a-fA-F]{6})/i);
-  if (bgMatch) spec.backgroundColor = bgMatch[1];
+  // Color extraction — Format 2: "BACKGROUND=#RRGGBB" / "TITLE_COLOUR=#RRGGBB" etc.
+  const bgMatch2 = specString.match(/BACKGROUND\s*=\s*(#[0-9a-fA-F]{6})/i);
+  if (bgMatch2) spec.backgroundColor = bgMatch2[1];
+  const titleColorMatch = specString.match(/TITLE_COLOU?R\s*=\s*(#[0-9a-fA-F]{6})/i);
+  if (titleColorMatch) spec.accentColor = titleColorMatch[1];
+  const bodyColorMatch = specString.match(/BODY_TEXT\s*=\s*(#[0-9a-fA-F]{6})/i);
+  if (bodyColorMatch) spec.textColor = bodyColorMatch[1];
+  const highlightMatch = specString.match(/HIGHLIGHT_ACCENT\s*=\s*(#[0-9a-fA-F]{6})/i);
+  if (highlightMatch && !spec.accentColor) spec.accentColor = highlightMatch[1];
 
   const layout = layoutMatch?.[1] || "title_card";
   if (layout === "end_card" && spec.title) {

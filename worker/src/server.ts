@@ -880,7 +880,7 @@ app.post("/timing-from-audio", async (req, res) => {
 // ── Render a motion graphic card as PNG → R2 ──
 
 app.post("/render-motion-graphic", async (req, res) => {
-  const { spec, projectId, sceneIndex } = req.body;
+  const { spec, projectId, sceneIndex, label } = req.body;
   if (!spec) return res.status(400).json({ error: "Missing spec" });
 
   const jobId = uuid();
@@ -889,7 +889,7 @@ app.post("/render-motion-graphic", async (req, res) => {
   try {
     if (typeof spec === "string") {
       // pipe-delimited string — parse and render using the spec helper
-      await renderMotionGraphicFromSpec(spec, outputPath);
+      await renderMotionGraphicFromSpec(spec, outputPath, label || undefined);
     } else {
       // MotionGraphicSpec object — render directly
       await renderMotionGraphic(spec as import("./motion-graphic-renderer").MotionGraphicSpec, outputPath);

@@ -831,6 +831,7 @@ const motion_graphic_cards: StepExecutor = async (ctx) => {
             spec: specToSend,
             projectId: ctx.project.id,
             sceneIndex: scene.scene_id,
+            label: scene.label,
           }),
           signal: AbortSignal.timeout(60_000),
         });
