@@ -76,6 +76,33 @@ export function parseDalleScenes(visualsRaw: string): SceneImage[] {
   }
 }
 
+export interface MotionGraphicScene {
+  scene_id: number;
+  label: string;
+  tag: string;
+  motion_graphic_spec: string;
+}
+
+/**
+ * Parse visual direction output and return all MOTION_GRAPHIC scenes.
+ * Handles both gold standard (tag) and legacy (tag_type) formats.
+ */
+export function parseMotionGraphicScenes(visualsRaw: string): MotionGraphicScene[] {
+  try {
+    const scenes = extractSceneArray(visualsRaw);
+    return scenes
+      .filter((s) => String(s.tag || s.tag_type || "").toUpperCase() === "MOTION_GRAPHIC")
+      .map((s): MotionGraphicScene => ({
+        scene_id: typeof s.scene_id === "number" ? s.scene_id : 0,
+        label: (s.label as string) || "",
+        tag: "MOTION_GRAPHIC",
+        motion_graphic_spec: (s.motion_graphic_spec as string) || (s.text_content as string) || "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Parse visual direction output and return all Runway scenes with metadata.
  * Handles both gold standard (tag/runway_prompt) and legacy (tag_type/prompt) formats.

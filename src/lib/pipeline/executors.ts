@@ -1,5 +1,5 @@
 import type { Project, ChannelProfile, FormatPreset, PipelineStep, StepResult, AssetSources, SceneImage, SceneImageStatus, SceneVideo } from "@/types";
-import { parseDalleScenes, parseRunwayScenes } from "@/lib/pipeline/parse-visual-scenes";
+import { parseDalleScenes, parseRunwayScenes, parseMotionGraphicScenes } from "@/lib/pipeline/parse-visual-scenes";
 import { extractNarration } from "@/lib/pipeline/extract-narration";
 import { DEFAULT_ASSET_SOURCES } from "@/types";
 import { generateWithClaude } from "@/lib/providers/anthropic";
@@ -697,23 +697,9 @@ const motion_graphics: StepExecutor = async (ctx) => {
 
   // Extract MOTION_GRAPHIC scenes for card spec generation
   let mgScenesContext = "";
-  if (visuals) {
-    try {
-      let parsed = JSON.parse(visuals.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
-      if (!Array.isArray(parsed)) {
-        for (const k of ["scenes", "data", "entries"]) {
-          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
-        }
-      }
-      if (Array.isArray(parsed)) {
-        const mgScenes = parsed.filter((s: Record<string, unknown>) =>
-          String(s.tag_type || "").toUpperCase() === "MOTION_GRAPHIC"
-        );
-        if (mgScenes.length > 0) {
-          mgScenesContext = `\n\nMOTION_GRAPHIC scenes requiring card specs:\n${JSON.stringify(mgScenes, null, 2)}`;
-        }
-      }
-    } catch { /* visual direction not parseable — skip */ }
+  const mgScenes = parseMotionGraphicScenes(visuals);
+  if (mgScenes.length > 0) {
+    mgScenesContext = `\n\nMOTION_GRAPHIC scenes requiring card specs:\n${JSON.stringify(mgScenes, null, 2)}`;
   }
 
   const result = await callLLM(ctx,
@@ -739,30 +725,16 @@ const motion_graphic_cards: StepExecutor = async (ctx) => {
     return { output: { status: "skipped", reason: "WORKER_URL not configured" }, cost_cents: 0 };
   }
 
-  // Get MOTION_GRAPHIC scenes from visual_direction
+  // Get MOTION_GRAPHIC scenes from visual_direction using shared parser
+  // (handles === VISUAL DIRECTION JSON === separator and both tag/tag_type formats)
   const visuals = (getPrevOutput(ctx.previousSteps, "visual_direction") as { visuals?: string })?.visuals || "";
-  let mgSceneList: Array<{ scene_id: number; label: string; layout: string; text_content: string; colour_scheme: Record<string, string> }> = [];
-  if (visuals) {
-    try {
-      let parsed = JSON.parse(visuals.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
-      if (!Array.isArray(parsed)) {
-        for (const k of ["scenes", "data", "entries"]) {
-          if (Array.isArray(parsed[k])) { parsed = parsed[k]; break; }
-        }
-      }
-      if (Array.isArray(parsed)) {
-        mgSceneList = parsed
-          .filter((s: Record<string, unknown>) => String(s.tag_type || "").toUpperCase() === "MOTION_GRAPHIC")
-          .map((s: Record<string, unknown>) => ({
-            scene_id: Number(s.scene || s.scene_id || 0),
-            label: String(s.label || s.narration || `Scene ${s.scene}`),
-            layout: String(s.layout_type || "title_card"),
-            text_content: String(s.text_content || s.narration || ""),
-            colour_scheme: (s.colour_scheme as Record<string, string>) || {},
-          }));
-      }
-    } catch { /* skip */ }
-  }
+  const mgSceneList = parseMotionGraphicScenes(visuals).map(s => ({
+    scene_id: s.scene_id,
+    label: s.label,
+    layout: "title_card",       // fallback — overridden by LLM card spec below
+    text_content: s.motion_graphic_spec,
+    colour_scheme: {} as Record<string, string>,
+  }));
 
   if (mgSceneList.length === 0) {
     return { output: { status: "skipped", reason: "No MOTION_GRAPHIC scenes found in visual direction" }, cost_cents: 0 };
