@@ -1,57 +1,85 @@
 /**
  * Extract pure narration text from a script for TTS / voiceover generation.
- * Strips all visual tags, scene markers, act headers, production notes, and
- * formatting — leaving only the words that should be spoken aloud.
  *
- * Used by BOTH the prepare/route.ts worker routing path AND the executors.ts
- * fallback path, ensuring consistent output regardless of execution path.
+ * Uses a 6-pass ordered algorithm that EXTRACTS only narration blocks rather
+ * than stripping bad content — far more robust against format variations.
+ *
+ * Gold standard script format (Step 8 output):
+ *   EDITORIAL LOG / preamble
+ *   ...
+ *   FINAL POLISHED SCRIPT        ← Pass 1 slices here
+ *   ...
+ *   [SCENE N — TITLE]
+ *   NARRATION (V.O.):            ← Pass 3 extracts between here...
+ *   Actual narration text
+ *   [DALLE: ...]                 ← ...and here
+ *   ...
+ *   WORD COUNT VERIFICATION      ← Pass 2 slices before here
+ *
+ * Used by BOTH prepare/route.ts AND executors.ts to ensure consistent output.
  */
 export function extractNarration(script: string): string {
-  return script
-    // ── Remove footer blocks ──────────────────────────────────────────────
-    // WORD COUNT VERIFICATION and everything after it
-    .replace(/\n*WORD COUNT VERIFICATION[\s\S]*/i, "")
+  let text = script;
 
-    // ── Remove preamble header blocks (bounded to next blank line) ────────
-    // PRODUCTION NOTES: header + all consecutive non-blank lines after it
-    .replace(/^PRODUCTION NOTES:?.*(\n(?!\n).+)*/gim, "")
-    // VISUAL TAG BUDGET: header + all consecutive non-blank lines after it
-    .replace(/^VISUAL TAG BUDGET:?.*(\n(?!\n).+)*/gim, "")
-    // Metadata key:value lines (Topic:, Channel:, Runtime target:, etc.)
-    .replace(/^(Topic|Channel|Runtime target|Word target|Format)\s*:.*$/gim, "")
-    // Markdown table rows (| Field | Value |) — used for metadata headers
-    .replace(/^\|.+\|.*$/gm, "")
-    // Markdown table separator rows (|---|---|)
-    .replace(/^\|[-| :]+\|.*$/gm, "")
+  // ── Pass 1: Slice to "FINAL POLISHED SCRIPT" ────────────────────────────
+  // Everything before this marker is editorial notes / compliance logs.
+  const finalScriptIdx = text.indexOf("FINAL POLISHED SCRIPT");
+  if (finalScriptIdx !== -1) {
+    text = text.slice(finalScriptIdx);
+  }
 
-    // ── Remove visual tags (bracketed) ────────────────────────────────────
-    // [DALLE: ...], [RUNWAY: ...], [STOCK: ...], [MOTION_GRAPHIC: ...], [VISUAL CUE: ...]
-    .replace(/\[(DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|VISUAL[\s_]CUE)[:\s][^\]]*\]/gi, "")
-    // [DELIVERY: ...], [DELIVERY NOTE: ...], [NOTE: ...]
-    .replace(/\[(DELIVERY NOTE?|NOTE)[:\s][^\]]*\]/gi, "")
+  // ── Pass 2: Slice before footer/end-of-narration markers ────────────────
+  // These sections always appear after the last narration block.
+  const endMarkers = [
+    "WORD COUNT VERIFICATION",
+    "PRODUCTION NOTES",
+    "DELIVERY NOTES",
+    "RUNWAY SCENE COUNT",
+    "EDITORIAL LOG",
+  ];
+  for (const marker of endMarkers) {
+    const idx = text.indexOf(marker);
+    if (idx !== -1) {
+      text = text.slice(0, idx);
+    }
+  }
 
-    // ── Remove scene / act structure markers ─────────────────────────────
-    // [SCENE N -- TITLE] or [SCENE HOOK -- TITLE] on its own line
-    .replace(/^\[SCENE[^\]]*\]\s*$/gim, "")
-    // ACT ONE: / ACT TWO: / ACT THREE: lines
-    .replace(/^ACT (ONE|TWO|THREE)\s*:.*$/gim, "")
-    // NARRATION (V.O.): prefix
-    .replace(/^NARRATION\s*\(V\.O\.\)\s*:?\s*/gim, "")
-    // Standalone VISUAL CUE: lines (not bracketed)
-    .replace(/^VISUAL CUE\s*:.*$/gim, "")
-    // Standalone DELIVERY: lines
-    .replace(/^DELIVERY( NOTE)?\s*:.*$/gim, "")
+  // ── Pass 3: Extract only NARRATION (V.O.) blocks ────────────────────────
+  // Each scene's narration sits between "NARRATION (V.O.):" and the next
+  // visual tag "[" or an ACT separator line.
+  const narrationBlocks: string[] = [];
+  const narrationRegex =
+    /NARRATION \(V\.O\.\):\s*\n([\s\S]*?)(?=\[|(?:\n\n+[A-Z][─\u2500]{3,}|\n\n+ACT )|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = narrationRegex.exec(text)) !== null) {
+    const block = match[1].trim();
+    if (block) narrationBlocks.push(block);
+  }
 
-    // ── Remove markdown formatting ────────────────────────────────────────
-    // Heading lines (## Section Title)
-    .replace(/^#{1,3}\s.*$/gm, "")
-    // Horizontal rules
-    .replace(/^---+$/gm, "")
-    // Bold / italic markers (keep the text, drop the asterisks)
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
+  // If Pass 3 found narration blocks, use only those.
+  // Fall back to the full (Pass 1+2 trimmed) text for older script formats
+  // that lack "NARRATION (V.O.):" prefixes.
+  if (narrationBlocks.length > 0) {
+    text = narrationBlocks.join("\n\n");
+  }
 
-    // ── Normalise whitespace ──────────────────────────────────────────────
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  // ── Pass 4: Strip remaining structural markers ───────────────────────────
+  text = text
+    .replace(/\[SCENE \d+[^\]]*\]/g, "")
+    .replace(/ACT [A-Z]+:[^\n]*/g, "")
+    .replace(/EMOTIONAL ARC:[^\n]*/g, "")
+    .replace(/[\u2500─]{3,}/g, "")
+    .replace(/^FINAL POLISHED SCRIPT.*$/m, "")
+    .replace(/^Production-ready.*$/m, "");
+
+  // ── Pass 5: Strip visual direction tags (s flag for multiline) ───────────
+  text = text.replace(
+    /\[(?:DALLE|RUNWAY|STOCK|MOTION_GRAPHIC|DELIVERY)[^\]]*\]/g,
+    ""
+  );
+
+  // ── Pass 6: Normalize whitespace ─────────────────────────────────────────
+  text = text.replace(/\n{3,}/g, "\n\n").trim();
+
+  return text;
 }
