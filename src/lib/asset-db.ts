@@ -133,27 +133,34 @@ export async function getAssetById(assetId: string): Promise<AssetRow | null> {
 }
 
 /**
- * Get pooled (pre-visual-direction) assets for a project + step.
- * Pooled assets have slot_key starting with "__pool__".
+ * Get unassigned manual assets for a project + step.
+ * Matches both new __pool__ prefix and legacy *_manual_* patterns —
+ * any manual asset whose slot_key is NOT in canonical scene format (scenes[N].xxx).
  */
 export async function getPooledAssets(projectId: string, step: string): Promise<AssetRow[]> {
   const sb = getSupabase();
   if (!sb) return [];
 
+  // Fetch all manual assets for this step, then filter client-side
+  // (Supabase doesn't support NOT LIKE + OR in a single query elegantly)
   const { data, error } = await sb
     .from("assets")
     .select("*")
     .eq("project_id", projectId)
     .eq("step", step)
     .eq("source", "manual")
-    .like("slot_key", "__pool__%")
     .order("created_at", { ascending: true });
 
   if (error) {
     console.error("[asset-db] getPooledAssets failed:", error.message);
     return [];
   }
-  return (data || []) as AssetRow[];
+
+  // Filter: keep only assets NOT already in canonical scene slot format
+  const canonicalPattern = /^scenes\[\d+\]\.(image_url|video_url)$/;
+  return ((data || []) as AssetRow[]).filter(
+    a => a.slot_key && !canonicalPattern.test(a.slot_key),
+  );
 }
 
 /**
