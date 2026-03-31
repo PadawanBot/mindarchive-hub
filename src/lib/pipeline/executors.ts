@@ -759,71 +759,54 @@ const motion_graphic_cards: StepExecutor = async (ctx) => {
   const existingScenes = prevOutput?.scenes || [];
 
   // Build full scene list, skip already completed
-  type SceneImageWithSpec = SceneImage & { _spec?: Record<string, unknown> };
+  type SceneImageWithSpec = SceneImage & { _spec?: Record<string, unknown> | string };
 
   const allScenes: SceneImageWithSpec[] = mgSceneList.map(s => {
     const existing = existingScenes.find(e => e.scene_id === s.scene_id);
     if (existing?.status === "completed" && existing.image_url) return existing;
 
-    // Build MotionGraphicSpec from LLM card + visual direction fallback
-    const spec: Record<string, unknown> = {
-      backgroundColor: "#0D0D14",
-      textColor: "#F0F0F4",
-      accentColor: "#1ABC9C",
-      fontSize: 48,
-      width: 1920,
-      height: 1080,
-    };
-
-    // Apply colour_scheme from visual direction
-    if (s.colour_scheme) {
-      for (const [k, v] of Object.entries(s.colour_scheme)) {
-        if (typeof v === "string" && v.startsWith("#")) {
-          const kl = k.toLowerCase();
-          if (kl.includes("bg") || kl.includes("background") || kl.includes("dark")) spec.backgroundColor = v;
-          else if (kl.includes("accent") || kl.includes("primary")) spec.accentColor = v;
-          else if (kl.includes("text") || kl.includes("body")) spec.textColor = v;
-        }
-      }
-    }
-
-    // Apply LLM card specs if available (higher priority)
+    // Apply LLM card specs if available (structured object)
     const llmCard = llmCardMap.get(s.scene_id);
     if (llmCard) {
+      const spec: Record<string, unknown> = {
+        backgroundColor: "#0D0D14",
+        textColor: "#F0F0F4",
+        accentColor: "#1ABC9C",
+        fontSize: 48,
+        width: 1920,
+        height: 1080,
+      };
       if (llmCard.title) spec.title = String(llmCard.title);
       if (llmCard.body) spec.body = String(llmCard.body);
       if (Array.isArray(llmCard.bullets)) spec.bullets = llmCard.bullets.map(String);
       if (llmCard.footer) spec.footer = String(llmCard.footer);
       if (llmCard.accent_color) spec.accentColor = String(llmCard.accent_color);
       if (llmCard.background_color) spec.backgroundColor = String(llmCard.background_color);
-    } else {
-      // Fallback: use text_content from visual direction
-      const parts = s.text_content.split(" / ");
-      if (s.layout === "end_card") {
-        spec.footer = parts[0] || "Subscribe for more";
-      } else {
-        spec.title = parts[0];
-        if (parts[1]) spec.body = parts[1];
-      }
+
+      return {
+        scene_id: s.scene_id,
+        label: s.label,
+        prompt: `LLM card | scene ${s.scene_id}`,
+        image_url: null,
+        revised_prompt: null,
+        status: "pending" as SceneImageStatus,
+        _spec: spec,
+      } as SceneImageWithSpec;
     }
 
-    // Build a prompt string summarising the spec (shown in the UI)
-    const promptParts = [
-      `layout=${s.layout}`,
-      spec.title ? `title="${spec.title}"` : null,
-      spec.body ? `body="${spec.body}"` : null,
-      Array.isArray(spec.bullets) && (spec.bullets as string[]).length > 0 ? `bullets=${(spec.bullets as string[]).length}` : null,
-      `accent=${String(spec.accentColor)}`,
-    ].filter(Boolean).join(" | ");
+    // Fallback: send raw motion_graphic_spec string to worker for parsing
+    // The worker's parseMotionGraphicSpec() handles pipe-delimited format
+    // (layout=end_card | text="..." | BACKGROUND=#080808 | accent ...)
+    const rawSpec = s.text_content || `layout=title_card | text="${s.label}"`;
 
     return {
       scene_id: s.scene_id,
       label: s.label,
-      prompt: promptParts,
+      prompt: `raw spec | scene ${s.scene_id}`,
       image_url: null,
       revised_prompt: null,
       status: "pending" as SceneImageStatus,
-      _spec: spec,
+      _spec: rawSpec,
     } as SceneImageWithSpec;
   });
 
