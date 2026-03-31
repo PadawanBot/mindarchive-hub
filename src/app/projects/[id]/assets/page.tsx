@@ -719,6 +719,7 @@ export default function AssetLibraryPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "image" | "audio" | "video">("all");
   const [syncing, setSyncing] = useState(false);
+  const [initSlots, setInitSlots] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadModalAssetType, setUploadModalAssetType] = useState<string | undefined>(undefined);
@@ -744,6 +745,27 @@ export default function AssetLibraryPage() {
       await loadData();
     } catch {}
     setSyncing(false);
+  }, [projectId, loadData]);
+
+  const initializeSlots = useCallback(async () => {
+    setInitSlots(true);
+    try {
+      const res = await fetch("/api/assets/init-slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await loadData();
+        alert(`Slots initialized: ${data.data?.summary || "done"}`);
+      } else {
+        alert(data.error || "Failed to initialize slots");
+      }
+    } catch (err) {
+      alert(`Error: ${String(err)}`);
+    }
+    setInitSlots(false);
   }, [projectId, loadData]);
 
   const deleteAsset = useCallback(async (assetId: string) => {
@@ -793,9 +815,15 @@ export default function AssetLibraryPage() {
           <h1 className="text-xl font-bold">Asset Library</h1>
           <p className="text-sm text-muted-foreground">
             View, manage, and upload production assets.
-            <span className="ml-2 text-xs text-muted-foreground/50 font-mono select-all">{projectId}</span>
+          </p>
+          <p className="text-xs text-muted-foreground font-mono select-all mt-0.5">
+            ID: {projectId}
           </p>
         </div>
+        <Button variant="ghost" size="sm" onClick={initializeSlots} disabled={initSlots || loading}>
+          <FolderOpen className={`h-4 w-4 mr-1 ${initSlots ? "animate-pulse" : ""}`} />
+          {initSlots ? "Initializing..." : "Init Slots"}
+        </Button>
         <Button variant="ghost" size="sm" onClick={syncAssets} disabled={syncing || loading}>
           <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
           {syncing ? "Syncing..." : "Sync"}
