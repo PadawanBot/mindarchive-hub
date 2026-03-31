@@ -793,6 +793,7 @@ export default function AssetLibraryPage() {
           <h1 className="text-xl font-bold">Asset Library</h1>
           <p className="text-sm text-muted-foreground">
             View, manage, and upload production assets.
+            <span className="ml-2 text-xs text-muted-foreground/50 font-mono select-all">{projectId}</span>
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={syncAssets} disabled={syncing || loading}>

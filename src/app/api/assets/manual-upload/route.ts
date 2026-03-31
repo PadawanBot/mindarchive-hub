@@ -230,6 +230,24 @@ export async function POST(request: Request) {
               modified_at: new Date().toISOString(),
             } as Record<string, unknown>);
           }
+        } else if (assetType === "stock_video") {
+          // Stock footage: append to footage[] array in the format the manifest builder expects
+          const footage = Array.isArray(currentOutput.footage) ? [...currentOutput.footage] as Record<string, unknown>[] : [];
+          footage.push({
+            query: `manual: ${file.name}`,
+            videos: [{
+              id: Date.now(),
+              url,
+              file_url: url,
+              thumbnail: "",
+              duration: 10, // default estimate — assembler will use actual duration from ffprobe
+            }],
+            source: "manual",
+          });
+          await upsertStep(projectId, step, {
+            output: { ...currentOutput, status: "completed", footage },
+            modified_at: new Date().toISOString(),
+          } as Record<string, unknown>);
         } else {
           // Generic fallback — use path-based patching
           const patchKey = slotName || slotKey;

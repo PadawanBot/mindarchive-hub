@@ -686,6 +686,15 @@ Output as a JSON array of strings (one per STOCK scene, max 10).`,
     });
   }
 
+  // Merge any manually uploaded stock clips (uploaded before this step ran)
+  const prevStockOutput = getPrevOutput(ctx.previousSteps, "stock_footage") as { footage?: { query: string; videos: unknown[]; source?: string }[] } | undefined;
+  if (prevStockOutput?.footage) {
+    const manualGroups = prevStockOutput.footage.filter(g => (g as Record<string, unknown>).source === "manual");
+    if (manualGroups.length > 0) {
+      results.push(...manualGroups as typeof results);
+    }
+  }
+
   return { output: { status: "completed", footage: results }, cost_cents: llmCost };
 };
 
