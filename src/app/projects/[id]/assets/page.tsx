@@ -368,22 +368,42 @@ function InlineUploadButton({ projectId, step, onSuccess }: InlineUploadProps) {
   );
 }
 
-// ─── Hero Scenes Panel ───────────────────────────────────────────────────────
+// ─── Generic Asset Slots Panel ──────────────────────────────────────────────
+// Shared component for Hero Scenes, DALL-E Images, and Stock Footage slots.
 
-interface HeroScene {
-  section: string;
+interface SlotScene {
+  scene_id?: number;
+  label?: string;
+  section?: string;
+  prompt?: string;
   promptText?: string;
+  query?: string;
+  image_url?: string | null;
+  video_url?: string | null;
+  status?: string;
+  task_id?: string;
   taskId?: string;
-  video_url?: string;
+  videos?: { file_url?: string }[];
 }
 
-interface HeroScenesPanelProps {
+interface AssetSlotsPanelProps {
   projectId: string;
+  stepName: string;
+  assetType: string;
+  accept: string;
+  title: string;
+  subtitle: string;
+  accentColor: string; // tailwind color name: "purple", "blue", "emerald"
+  urlField: "video_url" | "image_url" | "file_url";
+  icon: React.ReactNode;
   onAssetsChanged: () => void;
 }
 
-function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
-  const [scenes, setScenes] = useState<HeroScene[]>([]);
+function AssetSlotsPanel({
+  projectId, stepName, assetType, accept, title, subtitle,
+  accentColor, urlField, icon, onAssetsChanged,
+}: AssetSlotsPanelProps) {
+  const [scenes, setScenes] = useState<SlotScene[]>([]);
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [copied, setCopied] = useState<Record<number, boolean>>({});
   const fileRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -393,13 +413,32 @@ function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
       .then(r => r.json())
       .then(d => {
         if (!d.success) return;
-        const heroStep = (d.data as { step: string; output?: Record<string, unknown> }[])
-          .find(s => s.step === "hero_scenes");
-        const raw = heroStep?.output as { scenes?: HeroScene[] } | undefined;
-        if (raw?.scenes?.length) setScenes(raw.scenes);
+        const step = (d.data as { step: string; output?: Record<string, unknown> }[])
+          .find(s => s.step === stepName);
+        const output = step?.output as Record<string, unknown> | undefined;
+        // hero_scenes & image_generation use "scenes", stock_footage uses "footage"
+        const raw = (output?.scenes || output?.footage || []) as SlotScene[];
+        if (raw.length > 0) setScenes(raw);
       })
       .catch(() => {});
-  }, [projectId]);
+  }, [projectId, stepName]);
+
+  const getSceneLabel = (scene: SlotScene): string =>
+    scene.label || scene.section || `Scene ${scene.scene_id || "?"}`;
+
+  const getScenePrompt = (scene: SlotScene): string =>
+    scene.prompt || scene.promptText || scene.query || "";
+
+  const getSceneUrl = (scene: SlotScene): string | null => {
+    if (urlField === "video_url") return scene.video_url || null;
+    if (urlField === "image_url") return scene.image_url || null;
+    if (urlField === "file_url") {
+      // Stock footage: check videos[0].file_url
+      const vids = scene.videos || [];
+      return vids.length > 0 && vids[0].file_url ? vids[0].file_url : null;
+    }
+    return null;
+  };
 
   const copyPrompt = (index: number, text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -411,34 +450,31 @@ function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
   const handleUpload = async (index: number, file: File) => {
     setUploading(prev => ({ ...prev, [index]: true }));
     try {
-      // 1. Upload to asset library
       const formData = new FormData();
       formData.append("file", file);
       formData.append("project_id", projectId);
-      formData.append("asset_type", "runway_video");
-      formData.append("slot_name", `scenes[${index}].video_url`);
+      formData.append("asset_type", assetType);
+      // Build the canonical slot name
+      if (stepName === "stock_footage") {
+        formData.append("slot_name", `footage[${index}].video`);
+      } else {
+        formData.append("slot_name", `scenes[${index}].${urlField}`);
+      }
       const uploadRes = await fetch("/api/assets/manual-upload", { method: "POST", body: formData });
       const uploadData = await uploadRes.json();
       if (!uploadData.success) throw new Error(uploadData.error || "Upload failed");
 
-      const videoUrl: string = uploadData.data?.url || uploadData.data?.asset?.url;
-      if (!videoUrl) throw new Error("No URL returned");
+      const newUrl: string = uploadData.data?.url;
+      if (!newUrl) throw new Error("No URL returned");
 
-      // 2. Wire into hero_scenes step output
-      const updatedScenes = scenes.map((s, i) =>
-        i === index ? { ...s, video_url: videoUrl } : s
-      );
-      await fetch("/api/pipeline/step/update-output", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: projectId,
-          step: "hero_scenes",
-          output_update: { scenes: updatedScenes },
-        }),
-      });
-
-      setScenes(updatedScenes);
+      // Update local state to show the new asset immediately
+      setScenes(prev => prev.map((s, i) => {
+        if (i !== index) return s;
+        if (urlField === "video_url") return { ...s, video_url: newUrl, status: "completed" };
+        if (urlField === "image_url") return { ...s, image_url: newUrl, status: "completed" };
+        // stock: update videos array
+        return { ...s, videos: [{ file_url: newUrl }], status: "completed" };
+      }));
       onAssetsChanged();
     } catch (err) {
       alert(`Upload failed: ${String(err)}`);
@@ -449,72 +485,101 @@ function HeroScenesPanel({ projectId, onAssetsChanged }: HeroScenesPanelProps) {
 
   if (scenes.length === 0) return null;
 
+  const filledCount = scenes.filter(s => !!getSceneUrl(s)).length;
+  // Tailwind JIT needs static class names — map accent colors to pre-built classes
+  const colorMap: Record<string, { bg: string; text: string; border: string; hover: string }> = {
+    purple: { bg: "bg-purple-500/20", text: "text-purple-300", border: "border-purple-500/40", hover: "hover:bg-purple-500/10" },
+    blue: { bg: "bg-blue-500/20", text: "text-blue-300", border: "border-blue-500/40", hover: "hover:bg-blue-500/10" },
+    emerald: { bg: "bg-emerald-500/20", text: "text-emerald-300", border: "border-emerald-500/40", hover: "hover:bg-emerald-500/10" },
+  };
+  const colors = colorMap[accentColor] || colorMap.blue;
+  const bgClass = colors.bg;
+  const textClass = colors.text;
+  const borderClass = colors.border;
+  const hoverClass = colors.hover;
+
   return (
     <Card>
       <CardTitle className="flex items-center gap-2 text-base">
-        <Clapperboard className="w-4 h-4 text-purple-400" />
-        Hero Scene Slots
+        {icon}
+        {title}
         <Badge variant="outline" className="text-xs">{scenes.length} scenes</Badge>
-        <span className="text-xs text-muted-foreground font-normal ml-1">— upload externally generated clips (Grok, Sora, etc.)</span>
+        <Badge variant="outline" className="text-xs">{filledCount} / {scenes.length} filled</Badge>
+        <span className="text-xs text-muted-foreground font-normal ml-1">— {subtitle}</span>
       </CardTitle>
       <CardContent className="mt-3 space-y-3">
-        {scenes.map((scene, i) => (
-          <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-muted-foreground/10 bg-muted/20">
-            {/* Scene number */}
-            <div className="shrink-0 w-7 h-7 rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs font-bold">
-              {i + 1}
-            </div>
+        {scenes.map((scene, i) => {
+          const sceneUrl = getSceneUrl(scene);
+          const prompt = getScenePrompt(scene);
+          return (
+            <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-muted-foreground/10 bg-muted/20">
+              {/* Scene number */}
+              <div className={`shrink-0 w-7 h-7 rounded-full ${bgClass} ${textClass} flex items-center justify-center text-xs font-bold`}>
+                {scene.scene_id || i + 1}
+              </div>
 
-            {/* Info */}
-            <div className="flex-1 min-w-0 space-y-1">
-              <p className="text-xs font-semibold">{scene.section}</p>
-              {scene.promptText && (
-                <div className="flex items-start gap-1.5">
-                  <p className="text-xs text-muted-foreground leading-relaxed flex-1">{scene.promptText}</p>
-                  <button
-                    onClick={() => copyPrompt(i, scene.promptText!)}
-                    className="shrink-0 p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                    title="Copy prompt for Grok / Sora"
-                  >
-                    {copied[i] ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
+              {/* Info */}
+              <div className="flex-1 min-w-0 space-y-1">
+                <p className="text-xs font-semibold">{getSceneLabel(scene)}</p>
+                {prompt && (
+                  <div className="flex items-start gap-1.5">
+                    <p className="text-xs text-muted-foreground leading-relaxed flex-1 line-clamp-3">{prompt}</p>
+                    <button
+                      onClick={() => copyPrompt(i, prompt)}
+                      className="shrink-0 p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      title="Copy prompt"
+                    >
+                      {copied[i] ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Preview */}
+              {sceneUrl && urlField === "image_url" && (
+                <div className="shrink-0">
+                  <img src={sceneUrl} alt="" className="w-16 h-12 object-cover rounded border border-muted-foreground/10" />
                 </div>
               )}
-            </div>
 
-            {/* Status + upload */}
-            <div className="shrink-0 flex flex-col items-end gap-1.5">
-              {scene.video_url ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-green-500 font-medium">✓ Video ready</span>
-                  <a href={scene.video_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-muted-foreground hover:text-foreground">
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              ) : scene.taskId && !scene.taskId.startsWith("error:") ? (
-                <span className="text-xs text-yellow-500">Runway pending</span>
-              ) : (
-                <span className="text-xs text-muted-foreground">No video</span>
-              )}
-              <button
-                onClick={() => fileRefs.current[i]?.click()}
-                disabled={uploading[i]}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-dashed border-purple-500/40 text-purple-300 hover:bg-purple-500/10 transition-colors disabled:opacity-50"
-              >
-                {uploading[i] ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                {uploading[i] ? "Uploading..." : scene.video_url ? "Replace" : "Upload clip"}
-              </button>
-              <input
-                ref={el => { fileRefs.current[i] = el; }}
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(i, f); }}
-              />
+              {/* Status + upload */}
+              <div className="shrink-0 flex flex-col items-end gap-1.5">
+                {sceneUrl ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-green-500 font-medium">
+                      {urlField === "image_url" ? "✓ Image ready" : "✓ Video ready"}
+                    </span>
+                    <a href={sceneUrl} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-muted-foreground hover:text-foreground">
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ) : scene.status === "submitted" ? (
+                  <span className="text-xs text-yellow-500">Processing...</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {urlField === "image_url" ? "No image" : "No video"}
+                  </span>
+                )}
+                <button
+                  onClick={() => fileRefs.current[i]?.click()}
+                  disabled={uploading[i]}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-dashed ${borderClass} ${textClass} ${hoverClass} transition-colors disabled:opacity-50`}
+                >
+                  {uploading[i] ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  {uploading[i] ? "Uploading..." : sceneUrl ? "Replace" : urlField === "image_url" ? "Upload image" : "Upload clip"}
+                </button>
+                <input
+                  ref={el => { fileRefs.current[i] = el; }}
+                  type="file"
+                  accept={accept}
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(i, f); }}
+                />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </CardContent>
     </Card>
   );
@@ -872,12 +937,29 @@ export default function AssetLibraryPage() {
         ))}
       </div>
 
+      {/* Asset Slot Panels — per-scene upload after visual_direction */}
+      <AssetSlotsPanel
+        projectId={projectId} stepName="image_generation" assetType="dalle_image"
+        accept="image/*" title="DALL-E Image Slots" subtitle="upload AI-generated images (Grok, DALL-E, Midjourney, etc.)"
+        accentColor="blue" urlField="image_url" icon={<ImageIcon className="w-4 h-4 text-blue-400" />}
+        onAssetsChanged={loadData}
+      />
+      <AssetSlotsPanel
+        projectId={projectId} stepName="hero_scenes" assetType="runway_video"
+        accept="video/*,image/*" title="Hero Scene Slots" subtitle="upload externally generated clips (Grok, Sora, etc.)"
+        accentColor="purple" urlField="video_url" icon={<Clapperboard className="w-4 h-4 text-purple-400" />}
+        onAssetsChanged={loadData}
+      />
+      <AssetSlotsPanel
+        projectId={projectId} stepName="stock_footage" assetType="stock_video"
+        accept="video/*" title="Stock Footage Slots" subtitle="upload stock clips for STOCK-tagged scenes"
+        accentColor="emerald" urlField="file_url" icon={<FileVideo className="w-4 h-4 text-emerald-400" />}
+        onAssetsChanged={loadData}
+      />
+
       {/* Asset Re-assignment Panels (pooled assets → scene slots) */}
       <AssetReassignmentPanel projectId={projectId} step="image_generation" onMappingApplied={loadData} />
       <AssetReassignmentPanel projectId={projectId} step="hero_scenes" onMappingApplied={loadData} />
-
-      {/* Hero Scenes — prompt reference + per-slot upload */}
-      <HeroScenesPanel projectId={projectId} onAssetsChanged={loadData} />
 
       {/* Asset table grouped by step */}
       {Object.entries(grouped)
