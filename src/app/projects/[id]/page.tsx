@@ -271,6 +271,13 @@ export default function ProjectDetailPage() {
         const d = await res.json();
         if (d.success) freshSteps = d.data;
       } catch {}
+
+      // Hard stop after narration_review — user must read the output before voiceover runs
+      if (step.id === "narration_review") {
+        setCurrentStep(null);
+        setRunning(false);
+        return;
+      }
     }
 
     setCurrentStep(null);

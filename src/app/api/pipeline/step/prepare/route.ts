@@ -232,6 +232,9 @@ export async function POST(request: Request) {
         const narration = extractNarration(rawScript);
         const wordCount = narration.split(/\s+/).filter(Boolean).length;
         const estimatedMinutes = Math.round((wordCount / 150) * 10) / 10;
+        // Diagnostic: log first 300 chars of raw script so format is visible in Vercel logs
+        console.log(`[narration_review] raw[0:300]: ${rawScript.slice(0, 300).replace(/\n/g, "↵")}`);
+        console.log(`[narration_review] ${rawScript.length} chars → ${narration.length} chars, ${wordCount} words`);
 
         await upsertStep(project_id, "narration_review", {
           status: "completed",
