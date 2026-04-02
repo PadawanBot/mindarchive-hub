@@ -168,18 +168,23 @@ export async function POST(request: Request) {
         const existing = steps.find((s) => s.step === step);
         const currentOutput = (existing?.output || {}) as Record<string, unknown>;
 
+        // Helper: determine step record status — "completed" if all slots filled, else keep current
+        const resolveStepStatus = (allFilled: boolean, existingStatus?: string): string => {
+          if (allFilled) return "completed";
+          // Keep existing status if it was already completed (partial re-run)
+          if (existingStatus === "completed") return "completed";
+          return existingStatus || "pending";
+        };
+
         if (assetType === "voiceover") {
-          // Voiceover: write deterministic output so prepare route skips worker
           await upsertStep(projectId, step, {
             status: "completed",
             output: { ...currentOutput, audio_url: url, source: "manual", status: "completed" },
             modified_at: new Date().toISOString(),
           } as Record<string, unknown>);
         } else if (assetType === "runway_video") {
-          // Hero scenes: update SceneVideo[] (new format) or legacy scenes[]
           if (Array.isArray(currentOutput.scenes) && (currentOutput.scenes as Record<string, unknown>[])[0]?.scene_id != null) {
-            // New SceneVideo format: find scene by slot_name pattern "scenes[N].video_url"
-            const sceneIndexMatch = slotName?.match(/scenes\[(\d+)\]\.video_url/);
+            const sceneIndexMatch = slotKey.match(/scenes\[(\d+)\]\.video_url/);
             const scenes = [...currentOutput.scenes] as Record<string, unknown>[];
             if (sceneIndexMatch) {
               const idx = parseInt(sceneIndexMatch[1], 10);
@@ -187,30 +192,30 @@ export async function POST(request: Request) {
                 scenes[idx] = { ...scenes[idx], video_url: url, status: "completed", error: undefined, task_id: `manual_${Date.now()}` };
               }
             }
+            const allFilled = scenes.every(s => s.status === "completed" && s.video_url);
             await upsertStep(projectId, step, {
-              output: { ...currentOutput, status: "completed", scenes, total_requested: scenes.length },
+              status: resolveStepStatus(allFilled, existing?.status),
+              output: { ...currentOutput, status: allFilled ? "completed" : "partial", scenes, total_requested: scenes.length },
               modified_at: new Date().toISOString(),
             } as Record<string, unknown>);
           } else {
-            // Legacy format
             const scenes = Array.isArray(currentOutput.scenes) ? [...currentOutput.scenes] : [];
             scenes.push({
-              section: slotName || `Hero Scene ${scenes.length + 1}`,
+              section: slotKey || `Hero Scene ${scenes.length + 1}`,
               promptText: `Manually uploaded: ${file.name}`,
               taskId: `manual_${Date.now()}`,
               video_url: url,
               source: "manual",
             });
             await upsertStep(projectId, step, {
+              status: "completed",
               output: { ...currentOutput, status: "completed", scenes },
               modified_at: new Date().toISOString(),
             } as Record<string, unknown>);
           }
         } else if (assetType === "dalle_image") {
-          // DALL-E images: update scenes[] (new format) or images[] (legacy)
           if (Array.isArray(currentOutput.scenes)) {
-            // New scene-mapped format: find scene by slot_name pattern "scenes[N].image_url"
-            const sceneIndexMatch = slotName?.match(/scenes\[(\d+)\]\.image_url/);
+            const sceneIndexMatch = slotKey.match(/scenes\[(\d+)\]\.image_url/);
             const scenes = [...currentOutput.scenes] as Record<string, unknown>[];
             if (sceneIndexMatch) {
               const idx = parseInt(sceneIndexMatch[1], 10);
@@ -218,37 +223,36 @@ export async function POST(request: Request) {
                 scenes[idx] = { ...scenes[idx], image_url: url, status: "completed", error: undefined };
               }
             }
-            // Rebuild legacy images[] for backwards compat
             const images = scenes
               .filter((s) => s.status === "completed" && typeof s.image_url === "string")
               .map((s) => ({ url: s.image_url, prompt: s.prompt || "", revised_prompt: s.revised_prompt || "", stored: true }));
+            const allFilled = scenes.every(s => s.status === "completed" && s.image_url);
             await upsertStep(projectId, step, {
-              output: { ...currentOutput, status: "completed", scenes, images, generated: images.length, total_prompts: scenes.length },
+              status: resolveStepStatus(allFilled, existing?.status),
+              output: { ...currentOutput, status: allFilled ? "completed" : "partial", scenes, images, generated: images.length, total_prompts: scenes.length },
               modified_at: new Date().toISOString(),
             } as Record<string, unknown>);
           } else {
-            // Legacy flat images[] format
             const images = Array.isArray(currentOutput.images) ? [...currentOutput.images] : [];
             images.push({
               prompt: `Manually uploaded: ${file.name}`,
               url,
-              revised_prompt: slotName || file.name,
+              revised_prompt: slotKey || file.name,
               stored: true,
               source: "manual",
             });
             await upsertStep(projectId, step, {
+              status: "completed",
               output: { ...currentOutput, status: "completed", images, generated: images.length, total_prompts: images.length },
               modified_at: new Date().toISOString(),
             } as Record<string, unknown>);
           }
         } else if (assetType === "stock_video") {
-          // Stock footage: insert into initialized footage slot or append
           const footage = Array.isArray(currentOutput.footage) ? [...currentOutput.footage] as Record<string, unknown>[] : [];
           const slotMatch = slotKey.match(/^footage\[(\d+)\]\.video$/);
           if (slotMatch) {
             const idx = parseInt(slotMatch[1], 10);
             if (idx >= 0 && idx < footage.length) {
-              // Insert into initialized slot
               footage[idx] = {
                 ...footage[idx],
                 videos: [{
@@ -262,7 +266,6 @@ export async function POST(request: Request) {
               };
             }
           } else {
-            // No matching slot — append as new footage group
             footage.push({
               query: `manual: ${file.name}`,
               videos: [{
@@ -275,14 +278,18 @@ export async function POST(request: Request) {
               source: "manual",
             });
           }
-          const currentStatus = currentOutput.status === "completed" ? "completed" : "completed";
+          // Check if all footage slots have at least one video
+          const allFilled = footage.length > 0 && footage.every(f => {
+            const vids = f.videos as unknown[] | undefined;
+            return vids && vids.length > 0;
+          });
           await upsertStep(projectId, step, {
-            output: { ...currentOutput, status: currentStatus, footage },
+            status: resolveStepStatus(allFilled, existing?.status),
+            output: { ...currentOutput, status: allFilled ? "completed" : "partial", footage },
             modified_at: new Date().toISOString(),
           } as Record<string, unknown>);
         } else {
-          // Generic fallback — use path-based patching
-          const patchKey = slotName || slotKey;
+          const patchKey = slotKey;
           const patchedOutput = patchStepOutput(currentOutput, patchKey, url);
           await upsertStep(projectId, step, {
             output: patchedOutput,

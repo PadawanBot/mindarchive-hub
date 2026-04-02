@@ -46,7 +46,7 @@ export async function initializeAssetSlots(projectId: string, visualsRaw: string
       const completedCount = scenes.filter(s => s.status === "completed").length;
 
       await upsertStep(projectId, "image_generation", {
-        status: "pending",
+        status: completedCount === scenes.length ? "completed" : "pending",
         output: {
           scenes,
           total_prompts: scenes.length,
@@ -77,7 +77,7 @@ export async function initializeAssetSlots(projectId: string, visualsRaw: string
       const completedCount = scenes.filter(s => s.status === "completed").length;
 
       await upsertStep(projectId, "hero_scenes", {
-        status: "pending",
+        status: completedCount === scenes.length ? "completed" : "pending",
         output: {
           scenes,
           total_requested: scenes.length,
@@ -118,7 +118,7 @@ export async function initializeAssetSlots(projectId: string, visualsRaw: string
     }).length;
 
     await upsertStep(projectId, "stock_footage", {
-      status: "pending",
+      status: filledCount === footage.length ? "completed" : "pending",
       output: {
         footage,
         total_queries: footage.length,
