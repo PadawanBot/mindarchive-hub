@@ -611,7 +611,7 @@ export function buildManifest(
       landscape: { width: 1920, height: 1080 },
       portrait: { width: 1080, height: 1920 },
       fps: 25,
-      crf: 18,
+      crf: 23,
       preset: "fast",
     },
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
