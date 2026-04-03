@@ -914,4 +914,20 @@ app.get("/status/:jobId", (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`MindArchive Worker running on port ${PORT}`);
+
+  // Startup env check — warn about missing critical vars
+  const required = [
+    "WORKER_SECRET",
+    "OPENAI_API_KEY",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "R2_BUCKET",
+    "R2_PUBLIC_BASE",
+  ];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    console.warn(`[STARTUP] Missing env vars: ${missing.join(", ")} — some features will fail`);
+  } else {
+    console.log(`[STARTUP] All required env vars present`);
+  }
 });

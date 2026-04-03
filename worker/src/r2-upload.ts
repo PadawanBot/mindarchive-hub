@@ -44,10 +44,23 @@ export async function uploadToR2(
     signal: AbortSignal.timeout(600_000), // 10 minutes — large videos (200-300MB) need time
   });
 
-  const result = (await response.json()) as {
-    success: boolean;
-    errors?: unknown[];
-  };
+  // Guard against HTML error pages (auth failures, 5xx, etc.)
+  const responseText = await response.text();
+  if (!response.ok) {
+    const preview = responseText.slice(0, 300);
+    throw new Error(
+      `R2 upload failed: HTTP ${response.status} ${response.statusText} — ${preview}`
+    );
+  }
+
+  let result: { success: boolean; errors?: unknown[] };
+  try {
+    result = JSON.parse(responseText);
+  } catch {
+    throw new Error(
+      `R2 upload returned non-JSON response (HTTP ${response.status}): ${responseText.slice(0, 300)}`
+    );
+  }
 
   if (!result.success) {
     throw new Error(`R2 upload failed: ${JSON.stringify(result.errors)}`);

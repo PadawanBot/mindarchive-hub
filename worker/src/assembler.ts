@@ -110,6 +110,37 @@ function getAudioDuration(filePath: string): Promise<number> {
   });
 }
 
+/** Log ffprobe diagnostics for a rendered video (bitrate, size, duration, codec). */
+async function logVideoDiagnostics(filePath: string, label: string): Promise<void> {
+  try {
+    const stat = await fs.stat(filePath);
+    const sizeMB = (stat.size / 1024 / 1024).toFixed(1);
+    await new Promise<void>((resolve) => {
+      ffmpeg.ffprobe(filePath, (err, metadata) => {
+        if (err) {
+          console.warn(`[ffprobe] ${label}: probe failed — ${err.message}`);
+          console.log(`[ffprobe] ${label}: file size ${sizeMB} MB (probe unavailable)`);
+          resolve();
+          return;
+        }
+        const fmt = metadata.format;
+        const bitrateMbps = fmt.bit_rate ? (fmt.bit_rate / 1_000_000).toFixed(2) : "?";
+        const durationS = fmt.duration ? fmt.duration.toFixed(1) : "?";
+        const videoStream = metadata.streams?.find((s) => s.codec_type === "video");
+        const resolution = videoStream ? `${videoStream.width}x${videoStream.height}` : "?";
+        const codec = videoStream?.codec_name || "?";
+        console.log(
+          `[ffprobe] ${label}: ${resolution} ${codec} ${durationS}s ${bitrateMbps} Mbps ${sizeMB} MB` +
+          ` (gold baseline: 1920x1080 h264 ~2.7 Mbps ~176 MB for ~540s)`
+        );
+        resolve();
+      });
+    });
+  } catch (err) {
+    console.warn(`[ffprobe] ${label}: diagnostics failed — ${err}`);
+  }
+}
+
 // ── V1 assembler (unchanged) ──
 
 export async function assembleVideo(
@@ -744,7 +775,11 @@ export async function assembleVideoV2(
 
     onProgress(90);
 
-    // ── Phase 5: Upload both to Supabase (90-100%) ──
+    // ── Phase 5: Upload (90-100%) ──
+    // Log ffprobe diagnostics before upload so we can compare to gold standard
+    await logVideoDiagnostics(landscapePath, "landscape");
+    await logVideoDiagnostics(portraitPath, "portrait");
+
     console.log(`[v2] Job ${jobId}: uploading...`);
 
     const totalAudioDuration =
@@ -761,9 +796,14 @@ export async function assembleVideoV2(
     console.log(`[v2] Job ${jobId}: complete!`);
     return result;
   } finally {
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch {}
+    // Preserve workdir on failure for debugging (set PRESERVE_WORKDIR=1)
+    if (process.env.PRESERVE_WORKDIR === "1") {
+      console.log(`[v2] PRESERVE_WORKDIR=1 — keeping ${workDir}`);
+    } else {
+      try {
+        await fs.rm(workDir, { recursive: true, force: true });
+      } catch {}
+    }
   }
 }
 
