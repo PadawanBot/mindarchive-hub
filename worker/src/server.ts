@@ -920,7 +920,6 @@ app.listen(PORT, () => {
     "WORKER_SECRET",
     "OPENAI_API_KEY",
     "CLOUDFLARE_ACCOUNT_ID",
-    "CLOUDFLARE_API_TOKEN",
     "R2_BUCKET",
     "R2_PUBLIC_BASE",
   ];
@@ -929,5 +928,14 @@ app.listen(PORT, () => {
     console.warn(`[STARTUP] Missing env vars: ${missing.join(", ")} — some features will fail`);
   } else {
     console.log(`[STARTUP] All required env vars present`);
+  }
+
+  // R2 upload method check
+  if (process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
+    console.log(`[STARTUP] R2 upload: S3-compatible API (up to 5 GB)`);
+  } else if (process.env.CLOUDFLARE_API_TOKEN) {
+    console.warn(`[STARTUP] R2 upload: REST API fallback (100 MB limit) — set R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY for large files`);
+  } else {
+    console.warn(`[STARTUP] R2 upload: NO credentials configured — uploads will fail`);
   }
 });
